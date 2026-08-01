@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}我的设备 / My devices · WireGuard Manager{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <h1>我的设备 / My devices</h1>
+    <p>已使用 {{ devices|length }} / {{ g.user['device_quota'] }} 个设备名额。 <span class="muted">{{ devices|length }} of {{ g.user['device_quota'] }} device slots used.</span></p>
+  </div>
+</div>
+
+<section class="card">
+  <h2>新增设备 / Add a device</h2>
+  <p>私钥仅交付一次；配置丢失后只能 reset。 <span class="muted">The private key is delivered once. If the file is lost, reset the device.</span></p>
+  <form class="form-grid" method="post" action="{{ url_for('web.create_device_route') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>设备名称 / Device name
+      <input name="name" required maxlength="80" placeholder="Work laptop">
+    </label>
+    <label>客户端类型 / Client type
+      <select name="client_type" required>
+        {% for item in client_types %}<option value="{{ item }}">{{ item }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>一次性交付方式 / One-time delivery
+      <select name="delivery" required>
+        <option value="download">下载 .conf / Download .conf</option>
+        <option value="qr">显示二维码 / Show QR code</option>
+      </select>
+    </label>
+    <button type="submit">生成配置 / Create configuration</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>有效设备 / Active devices</h2>
+  {% if devices %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>名称 / Name</th><th>类型 / Type</th><th>隧道 IP / Tunnel IP</th><th>密钥代次 / Generation</th><th>操作 / Actions</th></tr></thead>
+    <tbody>
+    {% for device in devices %}
+      <tr>
+        <td>{{ device['name'] }}</td>
+        <td>{{ device['client_type'] }}</td>
+        <td><code>{{ device['static_ip'] }}</code></td>
+        <td>{{ device['key_generation'] }}</td>
+        <td class="actions">
+          <form method="post" action="{{ url_for('web.reset_device_route', device_id=device['id']) }}">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <input type="hidden" name="delivery" value="download">
+            <button class="secondary" type="submit">重置并下载 / Reset + download</button>
+          </form>
+          {% if device['client_type'] in ('ios', 'android') %}
+          <form method="post" action="{{ url_for('web.reset_device_route', device_id=device['id']) }}">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <input type="hidden" name="delivery" value="qr">
+            <button class="secondary" type="submit">重置并显示二维码 / Reset + QR</button>
+          </form>
+          {% endif %}
+          <form method="post" action="{{ url_for('web.delete_device_route', device_id=device['id']) }}">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <button class="danger" type="submit">删除 / Delete</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="empty">尚无设备 / No devices yet.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>客户端安装包 / Client installers</h2>
+  <p>优先使用官方商店或系统包管理器。这里的文件均由管理员上传并记录许可证依据。 <span class="muted">Use official stores/package managers where available. Files here were uploaded by an administrator with a recorded license basis.</span></p>
+  {% if installers %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>平台 / Platform</th><th>架构 / Architecture</th><th>版本 / Version</th><th>SHA-256</th><th>下载 / Download</th></tr></thead>
+    <tbody>{% for installer in installers %}<tr>
+      <td>{{ installer['platform'] }}</td><td>{{ installer['architecture'] }}</td><td>{{ installer['version'] }}</td>
+      <td><code class="hash">{{ installer['sha256'] }}</code></td>
+      <td><a href="{{ url_for('web.download_installer', installer_id=installer['id']) }}">{{ installer['original_filename'] }}</a></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="empty">尚未上传安装包 / No installers uploaded.</p>{% endif %}
+</section>
+
+<aside class="boundary">
+  WireGuard 官方客户端支持 Windows、macOS、Linux、iOS 和 Android。Clash Verge 共存只承诺桌面端边界，不承诺移动端双 VPN/TUN。<br>
+  <span class="muted">Official clients support all five platforms. Clash Verge coexistence is a desktop-only boundary; mobile dual VPN/TUN behavior is not promised.</span>
+</aside>
+
+<section class="card">
+  <h2>修改密码 / Change password</h2>
+  <form class="form-grid" method="post" action="{{ url_for('web.change_password') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>当前密码 / Current password<input type="password" name="current_password" required maxlength="1024" autocomplete="current-password"></label>
+    <label>新密码 / New password<input type="password" name="new_password" required minlength="12" maxlength="1024" autocomplete="new-password"></label>
+    <label>再次输入 / Repeat new password<input type="password" name="new_password_confirm" required minlength="12" maxlength="1024" autocomplete="new-password"></label>
+    <button type="submit">修改密码 / Change password</button>
+  </form>
+</section>
+{% endblock %}

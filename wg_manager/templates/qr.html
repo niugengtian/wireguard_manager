@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}一次性二维码 / One-time QR · WireGuard Manager{% endblock %}
+{% block content %}
+<section class="card qr-card">
+  <h1>请立即扫描 / Scan now</h1>
+  <p>此二维码包含 <strong>{{ device['name'] }}</strong> 的私钥，不会保存或再次显示。<br><span class="muted">This QR contains the device private key. It will not be stored or shown again.</span></p>
+  <img class="qr" src="{{ qr_data }}" alt="一次性 WireGuard 配置二维码 / One-time configuration QR code">
+  <p>导入官方客户端后请离开此页；丢失后只能 reset。<br><span class="muted">After importing it, leave this page. If lost, reset the device.</span></p>
+  <a class="button" href="{{ url_for('web.devices') }}">完成 / Done</a>
+</section>
+{% endblock %}

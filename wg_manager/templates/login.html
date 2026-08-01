@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}登录 / Sign in · WireGuard Manager{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>登录 / Sign in</h1>
+  <p>请使用管理员分配的账号。</p><p class="muted">Use your administrator-provided account.</p>
+  {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
+  <form method="post" action="{{ url_for('web.login') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>用户名 / Username
+      <input name="username" autocomplete="username" required autofocus maxlength="64">
+    </label>
+    <label>密码 / Password
+      <input type="password" name="password" autocomplete="current-password" required maxlength="1024">
+    </label>
+    <button type="submit">登录 / Sign in</button>
+  </form>
+</section>
+{% endblock %}

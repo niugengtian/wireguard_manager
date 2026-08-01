@@ -1,0 +1,27 @@
+[Unit]
+Description=WireGuard Manager web UI (desired state only)
+After=network.target
+
+[Service]
+Type=simple
+User=wireguard-manager
+Group=wireguard-manager
+WorkingDirectory=/opt/wireguard-manager
+EnvironmentFile=/etc/wireguard-manager.env
+ExecStart=/opt/wireguard-manager/.venv/bin/wg-manager-web
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/lib/wireguard-manager
+
+[Install]
+WantedBy=multi-user.target

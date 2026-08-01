@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}WireGuard 配置管理 / Manager{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="{{ url_for('web.index') }}">WireGuard 配置管理 / Manager</a>
+    {% if g.user %}
+      <nav aria-label="主导航 / Primary navigation">
+        {% if g.user['role'] == 'admin' %}<a href="{{ url_for('web.admin_dashboard') }}">管理 / Admin</a>{% endif %}
+        {% if g.user['role'] == 'user' %}<a href="{{ url_for('web.devices') }}">我的设备 / My devices</a>{% endif %}
+        <a href="{{ url_for('web.help_page') }}">帮助 / Help</a>
+        <span>{{ g.user['username'] }}</span>
+        <form class="inline" method="post" action="{{ url_for('web.logout') }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <button class="link-button" type="submit">退出 / Sign out</button>
+        </form>
+      </nav>
+    {% else %}
+      <nav aria-label="主导航 / Primary navigation"><a href="{{ url_for('web.help_page') }}">帮助 / Help</a></nav>
+    {% endif %}
+  </header>
+  <main>
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+      <p class="notice {{ category }}" role="status">{{ message }}</p>
+    {% endfor %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer>仅启用文件适配器 · 已禁用现网 WireGuard 变更 / File adapter only · live changes disabled</footer>
+</body>
+</html>

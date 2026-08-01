@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}管理后台 / Administration · WireGuard Manager{% endblock %}
+{% block content %}
+<h1>管理后台 / Administration</h1>
+<p>这里只管理期望 Peer 状态，不能执行 <code>wg</code> 或 <code>syncconf</code>。 <span class="muted">Desired peer state only; live commands are disabled.</span></p>
+
+<section class="card">
+  <h2>创建用户 / Create user</h2>
+  <form class="form-grid" method="post" action="{{ url_for('web.admin_create_user') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>用户名 / Username<input name="username" required minlength="3" maxlength="64" autocomplete="off"></label>
+    <label>临时密码 / Temporary password<input type="password" name="password" required minlength="12" maxlength="1024" autocomplete="new-password"></label>
+    <label>设备配额 / Device quota<input type="number" name="quota" min="0" max="100" value="2" required></label>
+    <button type="submit">创建用户 / Create user</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>用户 / Users</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>用户名 / Username</th><th>角色 / Role</th><th>设备 / Devices</th><th>状态与配额 / Enabled & quota</th></tr></thead>
+    <tbody>{% for user in users %}<tr>
+      <td>{{ user['username'] }}</td><td>{{ user['role'] }}</td><td>{{ user['device_count'] }}</td>
+      <td><form class="inline controls" method="post" action="{{ url_for('web.admin_update_user', user_id=user['id']) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <select name="enabled"><option value="1"{% if user['enabled'] %} selected{% endif %}>启用 / enabled</option><option value="0"{% if not user['enabled'] %} selected{% endif %}>禁用 / disabled</option></select>
+        <input aria-label="Device quota" type="number" name="quota" min="0" max="100" value="{{ user['device_quota'] }}" required>
+        <button class="secondary" type="submit">保存 / Save</button>
+      </form>
+      <details><summary>重置密码 / Reset password</summary>
+        <form method="post" action="{{ url_for('web.admin_reset_user_password', user_id=user['id']) }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <label>新密码 / New password<input type="password" name="password" minlength="12" maxlength="1024" required autocomplete="new-password"></label>
+          <label>再次输入 / Repeat password<input type="password" name="password_confirm" minlength="12" maxlength="1024" required autocomplete="new-password"></label>
+          <button class="secondary" type="submit">重置并撤销会话 / Reset and revoke sessions</button>
+        </form>
+      </details></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+
+<section class="card">
+  <h2>全部设备 / All devices</h2>
+  {% if devices %}<div class="table-wrap"><table>
+    <thead><tr><th>用户 / User</th><th>名称 / Name</th><th>类型 / Type</th><th>隧道 IP / Tunnel IP</th><th>代次 / Generation</th><th>操作 / Action</th></tr></thead>
+    <tbody>{% for device in devices %}<tr>
+      <td>{{ device['username'] }}</td><td>{{ device['name'] }}</td><td>{{ device['client_type'] }}</td><td><code>{{ device['static_ip'] }}</code></td><td>{{ device['key_generation'] }}</td>
+      <td><form method="post" action="{{ url_for('web.admin_delete_device', device_id=device['id']) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="danger" type="submit">删除 / Delete</button>
+      </form></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>{% else %}<p class="empty">尚无设备 / No devices.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>上传客户端安装包 / Upload client installer</h2>
+  <p>优先使用官方链接。必须核对具体文件的许可证和分发条款，并保存对应许可说明。<br><span class="muted">Prefer official links. Check the exact artifact's license and distribution terms before upload.</span></p>
+  <form class="form-grid" method="post" enctype="multipart/form-data" action="{{ url_for('web.admin_upload_installer') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>平台 / Platform<select name="platform">{% for item in client_types %}<option value="{{ item }}">{{ item }}</option>{% endfor %}</select></label>
+    <label>架构 / Architecture<select name="architecture">{% for item in architectures %}<option value="{{ item }}">{{ item }}</option>{% endfor %}</select></label>
+    <label>版本 / Version<input name="version" required maxlength="64"></label>
+    <label>安装包 / Installer<input type="file" name="installer" required></label>
+    <label>许可证或条款 / License or terms<input name="license_name" required maxlength="120" placeholder="GPL-2.0 / vendor distribution terms"></label>
+    <label>许可来源 URL / License source URL<input type="url" name="license_source_url" required maxlength="500" placeholder="https://..."></label>
+    <label class="checkbox"><input type="checkbox" name="redistribution_confirmed" value="1" required> 我已确认该文件允许再分发 / I verified redistribution is permitted.</label>
+    <button type="submit">上传并计算哈希 / Upload and hash</button>
+  </form>
+  {% if installers %}<div class="table-wrap"><table>
+    <thead><tr><th>平台 / Platform</th><th>版本 / Version</th><th>大小 / Size</th><th>SHA-256</th><th>许可依据 / License basis</th></tr></thead>
+    <tbody>{% for installer in installers %}<tr>
+      <td>{{ installer['platform'] }} / {{ installer['architecture'] }}</td><td>{{ installer['version'] }}</td><td>{{ installer['size_bytes'] }} B</td>
+      <td><code class="hash">{{ installer['sha256'] }}</code></td><td><a href="{{ installer['license_source_url'] }}" rel="noreferrer">{{ installer['license_name'] }}</a></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>{% endif %}
+</section>
+
+<section class="card">
+  <h2>审计记录 / Audit trail</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>时间 / Time</th><th>操作者 / Actor</th><th>动作 / Action</th><th>对象 / Object</th><th>结果 / Outcome</th><th>详情 / Details</th></tr></thead>
+    <tbody>{% for event in events %}<tr>
+      <td>{{ event['created_at'] }}</td><td>{{ event['actor_kind'] }}{% if event['actor_user_id'] %}:{{ event['actor_user_id'] }}{% endif %}</td>
+      <td>{{ event['action'] }}</td><td>{{ event['object_type'] }}{% if event['object_id'] %}:{{ event['object_id'] }}{% endif %}</td><td>{{ event['outcome'] }}</td><td><code>{{ event['details_json'] }}</code></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endblock %}

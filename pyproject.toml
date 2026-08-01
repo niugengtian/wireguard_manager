@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wireguard-manager"
+version = "0.1.0"
+description = "Small server-rendered WireGuard user and device manager"
+requires-python = ">=3.11"
+dependencies = [
+  "Flask>=3.1,<4",
+  "cryptography>=48.0.1,<49",
+  "qrcode[pil]>=8,<9",
+  "waitress>=3.0,<4",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+audit = ["pip-audit>=2.10,<3"]
+
+[project.scripts]
+wg-manager = "wg_manager.cli:main"
+wg-manager-web = "wg_manager.__main__:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["wg_manager*"]
+
+[tool.setuptools.package-data]
+wg_manager = ["templates/*.html", "static/*.css"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

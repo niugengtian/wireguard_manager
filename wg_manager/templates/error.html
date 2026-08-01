@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}错误 / Error {{ status }} · WireGuard Manager{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>错误 / Error {{ status }}</h1>
+  <p>{{ description }}</p>
+  <a class="button" href="{{ url_for('web.index') }}">返回首页 / Back home</a>
+</section>
+{% endblock %}

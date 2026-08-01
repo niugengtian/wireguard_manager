@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}帮助 / Help · WireGuard Manager{% endblock %}
+{% block content %}
+<h1>帮助 / Help</h1>
+
+<section class="card">
+  <h2>用户快速上手 / User quick start</h2>
+  <ol>
+    <li>登录后填写设备名称并选择 Windows、macOS、Linux、iOS 或 Android。<br><span class="muted">Sign in, name the device, and select its client platform.</span></li>
+    <li>桌面端下载一次性 <code>.conf</code>；移动端可选择一次性二维码。<br><span class="muted">Download the one-time <code>.conf</code> on desktop, or choose a one-time QR code for mobile.</span></li>
+    <li>配置丢失时使用 reset。旧公钥立即撤销，新配置仅交付一次，静态 IP 默认保留。<br><span class="muted">If a configuration is lost, reset it. The old public key is revoked, a new configuration is delivered once, and the static IP is preserved.</span></li>
+    <li>delete 会先从期望 Peer 状态移除设备，再释放 IP。<br><span class="muted">Delete removes the device from desired peer state before releasing its IP.</span></li>
+  </ol>
+</section>
+
+<section class="card">
+  <h2>管理员 / Administrators</h2>
+  <p>管理员可创建、启停用户、修改配额、查看或删除设备、查看审计记录，并在核对许可证后上传客户端安装包。</p>
+  <p class="muted">Administrators can create/disable users, change quotas, inspect or delete devices, review audits, and upload client packages after checking redistribution rights.</p>
+  <p>应用只生成期望 Peer 文件，不会执行 <code>wg</code> 或 <code>syncconf</code>。接入现网前必须另行确认最小权限 reconciler。</p>
+  <p class="muted">The app only generates desired peer state. It cannot run <code>wg</code> or <code>syncconf</code>; a least-privilege reconciler requires separate approval.</p>
+</section>
+
+<section class="card">
+  <h2>命令行 / CLI</h2>
+  <pre><code>wg-manager --help
+wg-manager user --help
+wg-manager device --help
+wg-manager installer --help</code></pre>
+  <p>CLI 与 Web 共用同一数据库、配额、IP 分配、密钥生命周期和审计规则。配置不会打印到终端，只会写入指定的新文件并设置为 <code>0600</code>。</p>
+  <p class="muted">CLI and Web share the same database and rules. Configurations are never printed; they are written to a new caller-selected file with mode <code>0600</code>.</p>
+</section>
+
+<section class="card">
+  <h2>服务端部署 / Server deployment</h2>
+  <p>Amazon Linux 2023、Ubuntu、CentOS Stream 和 Rocky Linux 的完整双语指南见：</p>
+  <p><a href="https://github.com/niugengtian/wireguard_manager/blob/main/docs/WIREGUARD_SERVER_GUIDE.md" rel="noreferrer">WireGuard Server 部署与操作指南 / Deployment and operations guide</a></p>
+</section>
+{% endblock %}
