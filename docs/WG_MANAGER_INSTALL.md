@@ -3,7 +3,7 @@
 > 中文为主，英文说明见文末。本指南用于在**已经运行 WireGuard Server** 的 Linux 主机上安装 Manager Web/CLI 和实时 Peer reconciler。它不会重新安装 WireGuard，也不会覆盖 `/etc/wireguard/wg0.conf`。
 
 状态 / Status: `READY`（安装步骤与实现） · `NOT VERIFIED`（你的真实服务器验收）
-最后核对 / Last verified: **2026-08-02**
+最后核对 / Last verified: **2026-08-03**
 
 ## 1. 组件边界
 
@@ -130,6 +130,8 @@ sudo install -d \
 ```
 
 Web 和 CLI 都拒绝以 root 运行。SQLite、会话密钥、安装包和期望状态只写入 `/var/lib/wireguard-manager`，不写入源码目录。
+
+`/opt/wireguard-manager` 和虚拟环境由 root 安装是预期的安全边界：服务运行用户只读程序代码，不能改写自己的可执行文件。“Web 不以 root 运行”不等于“安装时不能使用 root”。
 
 ## 5. 连接现有 WireGuard 参数
 
@@ -373,8 +375,8 @@ sudo cp -a /var/lib/wireguard-manager-reconciler /var/lib/wireguard-manager-reco
 安装新源码后重新运行 pip 并启动：
 
 ```sh
-sudo /opt/wireguard-manager/.venv/bin/pip install \
-  --no-cache-dir \
+sudo /opt/wireguard-manager/.venv/bin/python -m pip install \
+  --no-cache-dir --no-deps --force-reinstall \
   /opt/wireguard-manager
 sudo systemctl start wireguard-manager-reconciler
 sudo systemctl start wireguard-manager
@@ -401,6 +403,7 @@ This guide installs WireGuard Manager and its live reconciler next to an already
 Troubleshooting rules:
 
 - Missing `pyproject.toml`: the source was not extracted at the expected directory level.
+- `Cannot update time stamp of directory 'wireguard_manager.egg-info'`: a non-root account tried to build inside the root-owned source tree. Run the venv `pip install` command with `sudo`; if stale generated metadata still blocks it, remove only `/opt/wireguard-manager/wireguard_manager.egg-info` and retry. Do not make the application source writable by the Web service user.
 - Missing systemd units: install both templates under `deploy/` into `/etc/systemd/system/` and run `daemon-reload`.
 - Generic Python `File not found` 404: another process owns the port; inspect it and choose an unused port.
 - Local curl works but the client cannot connect: check client routes and the host firewall on `wg0`.
