@@ -3,13 +3,20 @@ from __future__ import annotations
 import os
 import secrets
 
+import pytest
+
 from wg_manager import cli
+from wg_manager.version import __version__
 
 
 def test_cli_device_lifecycle_writes_secret_file_only(monkeypatch, tmp_path, capsys):
     help_text = cli.build_parser().format_help()
     assert "本机 WireGuard" in help_text
     assert "Local WireGuard" in help_text
+    with pytest.raises(SystemExit) as version_exit:
+        cli.build_parser().parse_args(["--version"])
+    assert version_exit.value.code == 0
+    assert f"wg-manager {__version__}" in capsys.readouterr().out
     data_dir = tmp_path / "cli-data"
     password = secrets.token_urlsafe(18)
     monkeypatch.setenv("WG_MANAGER_DATA_DIR", str(data_dir))

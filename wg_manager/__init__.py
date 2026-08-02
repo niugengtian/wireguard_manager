@@ -10,6 +10,7 @@ from flask import Flask, g, request, session
 from .db import close_db, get_db, initialize
 from .policy import normalize_client_allowed_ips
 from .security import load_or_create_secret
+from .version import __version__
 
 
 def create_app(test_config: dict | None = None) -> Flask:
@@ -43,6 +44,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     app = Flask(__name__)
     app.config.from_mapping(
         DATA_DIR=str(data_dir),
+        WG_MANAGER_VERSION=__version__,
         DATABASE=str(data_dir / "manager.sqlite3"),
         INSTALLER_DIR=str(data_dir / "installers"),
         EXPECTED_PEERS_FILE=str(data_dir / "expected-peers.json"),

@@ -23,6 +23,7 @@ from .services import (
     update_device_allowed_ips,
     update_user,
 )
+from .version import __version__
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,6 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
   密码使用无回显交互输入；配置不会打印到终端。
   Passwords are prompted without echo; configurations are never printed.""",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     groups = parser.add_subparsers(dest="group", required=True, title=bi("命令组", "command groups"))
 
     user = groups.add_parser("user", help=bi("管理用户", "Manage users"))

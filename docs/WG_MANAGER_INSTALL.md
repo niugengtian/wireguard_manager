@@ -2,6 +2,8 @@
 
 > 中文为主，英文说明见文末。本指南用于在**已经运行 WireGuard Server** 的 Linux 主机上安装 Manager Web/CLI 和实时 Peer reconciler。它不会重新安装 WireGuard，也不会覆盖 `/etc/wireguard/wg0.conf`。
 
+> 从 WireGuard Server 开始的完整流程、升级回滚和集中故障矩阵见 [端到端运维手册](OPERATIONS_RUNBOOK.md)。
+
 状态 / Status: `READY`（安装步骤与实现） · `NOT VERIFIED`（你的真实服务器验收）
 最后核对 / Last verified: **2026-08-03**
 
@@ -64,10 +66,30 @@ Ubuntu 22.04 的系统 Python 通常低于 3.11；必须先使用组织批准的
 
 ## 3. 获取并安装源码
 
-### 方法 A：GitHub clone
+### 方法 A：本地发布包上传（私有仓库推荐）
 
 ```sh
-git clone https://github.com/niugengtian/wireguard_manager.git /tmp/wireguard-manager-source
+# 在 Mac/管理机
+shasum -a 256 wireguard-manager-RELEASE.tar.gz \
+  > wireguard-manager-RELEASE.tar.gz.sha256
+cat wireguard-manager-RELEASE.tar.gz.sha256
+scp wireguard-manager-RELEASE.tar.gz \
+  wireguard-manager-RELEASE.tar.gz.sha256 \
+  SERVER_USER@SERVER_ADDRESS:/tmp/
+
+# 在服务器
+cd /tmp
+sha256sum -c wireguard-manager-RELEASE.tar.gz.sha256
+sudo tar --no-same-owner -xzf wireguard-manager-RELEASE.tar.gz -C /opt
+```
+
+本项目的发布 tar 固定含 `wireguard-manager/` 前缀，因此解压后应直接得到 `/opt/wireguard-manager/pyproject.toml`。
+
+### 方法 B：服务器已配置仓库读权限时使用 SSH clone
+
+```sh
+git clone git@github.com:niugengtian/wireguard_manager.git \
+  /tmp/wireguard-manager-source
 git -C /tmp/wireguard-manager-source rev-parse HEAD
 
 sudo install -d -o root -g root -m 0755 /opt/wireguard-manager
@@ -75,18 +97,7 @@ git -C /tmp/wireguard-manager-source archive HEAD |
   sudo tar -x -C /opt/wireguard-manager
 ```
 
-### 方法 B：GitHub 源码压缩包
-
-```sh
-curl --fail --location \
-  https://github.com/niugengtian/wireguard_manager/archive/refs/heads/main.tar.gz \
-  --output /tmp/wireguard-manager-source.tar.gz
-
-sudo install -d -o root -g root -m 0755 /opt/wireguard-manager
-sudo tar -xzf /tmp/wireguard-manager-source.tar.gz \
-  -C /opt/wireguard-manager \
-  --strip-components=1
-```
+私有仓库未在服务器配置 deploy key/SSH 读权限时，不要用未认证的 GitHub `curl` 链接；它会返回 404 或登录页，应使用方法 A。
 
 在执行 `pip install` 前必须通过这个门禁：
 
@@ -106,6 +117,7 @@ sudo /opt/wireguard-manager/.venv/bin/pip install \
   --no-cache-dir \
   /opt/wireguard-manager
 
+/opt/wireguard-manager/.venv/bin/wg-manager --version
 /opt/wireguard-manager/.venv/bin/wg-manager --help
 ```
 
@@ -362,29 +374,9 @@ sudo journalctl -u wireguard-manager -n 20 --no-pager
 
 ## 10. 更新与回滚
 
-更新前先记录当前 commit，并备份数据库和期望状态；备份目录必须在源码外且权限为 `0700`：
+使用 [端到端运维手册第 9 节](OPERATIONS_RUNBOOK.md) 的完整流程。核心顺序是：校验新 tar SHA-256，只停两个 Manager 服务，写入不可覆盖的版本化备份目录，解压新源码，先 uninstall 旧 Python 包并只清理可再生的 `wireguard_manager.egg-info`，重装后校验 CLI 版本、`pip show` 和实际模块路径，最后先启 reconciler 再启 Web。
 
-```sh
-git -C /tmp/wireguard-manager-source rev-parse HEAD
-sudo systemctl stop wireguard-manager
-sudo systemctl stop wireguard-manager-reconciler
-sudo cp -a /var/lib/wireguard-manager /var/lib/wireguard-manager.rollback
-sudo cp -a /var/lib/wireguard-manager-reconciler /var/lib/wireguard-manager-reconciler.rollback
-```
-
-安装新源码后重新运行 pip 并启动：
-
-```sh
-sudo /opt/wireguard-manager/.venv/bin/python -m pip install \
-  --no-cache-dir --no-deps --force-reinstall \
-  /opt/wireguard-manager
-sudo systemctl start wireguard-manager-reconciler
-sudo systemctl start wireguard-manager
-sudo systemctl status wireguard-manager-reconciler --no-pager
-sudo systemctl status wireguard-manager --no-pager
-```
-
-停止或升级 Manager 服务不会停止 `wg0`，已有隧道继续运行。回滚时恢复已记录的旧 commit 和数据库备份，再依次启动 reconciler 和 Web。不要回滚或覆盖 `/etc/wireguard/wg0.conf`，因为 Manager 不拥有该文件。
+停止或升级 Manager 服务不会停止 `wg0`，已有隧道继续运行。不要回滚或覆盖 `/etc/wireguard/wg0.conf`，因为 Manager 不拥有该文件。
 
 ---
 

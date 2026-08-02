@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from wg_manager import create_app
 from wg_manager.db import get_db
 from wg_manager.services import create_device, create_user
+from wg_manager.version import __version__
 
 from conftest import csrf, login, logout
 
@@ -463,6 +464,7 @@ def test_csrf_and_login_rate_limit(app, client):
     help_page = client.get("/help")
     assert b"\xe5\xb8\xae\xe5\x8a\xa9" in help_page.data
     assert b"User quick start" in help_page.data
+    assert f"v{__version__}".encode() in help_page.data
     assert client.post("/login", data={"username": "runtime-admin"}).status_code == 400
     client.get("/login")
     for _ in range(3):

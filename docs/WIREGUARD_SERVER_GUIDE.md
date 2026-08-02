@@ -3,7 +3,7 @@
 > 中文在前，英文紧随每节。本文只提供人工操作指南，不会自动修改服务器、云防火墙或 AWS 资源。
 > Chinese comes first, followed by English. This document is manual guidance only; it does not modify hosts, cloud firewalls, or AWS resources.
 
-最后核对 / Last verified: **2026-08-02**
+最后核对 / Last verified: **2026-08-03**
 
 官方依据 / Primary references:
 
@@ -302,7 +302,7 @@ Consider `restart` only if the interface itself is already unusable and a mainte
 
 ## 12. 与 WireGuard Manager 的边界 / Manager integration boundary
 
-在已经运行本指南服务端的主机上安装 Web/CLI，请使用 [WireGuard Manager 安装与启动指南](WG_MANAGER_INSTALL.md)。该指南不会重装 WireGuard 或覆盖 `wg0.conf`。
+从 WireGuard Server、Manager 到 reconciler 的完整安装顺序、日常操作、升级回滚和故障矩阵见 [端到端运维手册](OPERATIONS_RUNBOOK.md)。已经运行本指南服务端的主机，也可直接使用 [WireGuard Manager 安装与启动指南](WG_MANAGER_INSTALL.md)。这些指南不会重装 WireGuard 或覆盖 `wg0.conf`。
 
 生产实时模式设置：
 

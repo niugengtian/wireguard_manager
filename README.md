@@ -1,6 +1,6 @@
 # WireGuard Manager｜WireGuard 用户与设备配置管理
 
-[中文](#中文说明) · [English](#english) · [Manager 安装指南 / Manager install](docs/WG_MANAGER_INSTALL.md) · [服务端部署指南 / Server guide](docs/WIREGUARD_SERVER_GUIDE.md) · [验收记录 / Acceptance](ACCEPTANCE.md)
+[中文](#中文说明) · [English](#english) · [端到端运维手册 / Operations runbook](docs/OPERATIONS_RUNBOOK.md) · [Manager 安装指南 / Manager install](docs/WG_MANAGER_INSTALL.md) · [服务端部署指南 / Server guide](docs/WIREGUARD_SERVER_GUIDE.md) · [验收记录 / Acceptance](ACCEPTANCE.md)
 
 ## 中文说明
 
@@ -42,7 +42,7 @@ SQLite 与期望 Peer 文件只保存公钥。配置丢失后无法找回，只�
 
 ### 安装与启动
 
-在已经运行 WireGuard 的服务器上部署时，请直接使用 [WireGuard Manager 安装与启动指南](docs/WG_MANAGER_INSTALL.md)。其中记录了源码解压、非 root 安装、现有 `wg0` 参数、systemd、通过隧道地址访问和常见错误排查。
+从空服务器开始时，按 [WireGuard + wg-manager 端到端运维手册](docs/OPERATIONS_RUNBOOK.md) 执行；已经运行 WireGuard 时，可直接使用 [WireGuard Manager 安装与启动指南](docs/WG_MANAGER_INSTALL.md)。手册记录了三个组件的安装顺序、源码包校验、非 root 运行、systemd、日常操作、升级回滚和本次真实排错经验。
 
 需要 Python 3.11 或更高版本，并使用专用的**非 root** 系统用户运行：
 
@@ -166,7 +166,7 @@ Client `AllowedIPs` accepts up to 32 comma-separated IPv4 CIDRs. `0.0.0.0/0` mea
 
 ### Install and run
 
-For deployment next to an existing WireGuard server, follow the [WireGuard Manager installation guide](docs/WG_MANAGER_INSTALL.md). It covers source extraction, non-root operation, existing `wg0` parameters, systemd, tunnel-address access, and observed installation failures.
+For a complete server-to-Manager deployment, follow the [end-to-end operations runbook](docs/OPERATIONS_RUNBOOK.md). For deployment next to an existing WireGuard server, follow the [WireGuard Manager installation guide](docs/WG_MANAGER_INSTALL.md). They cover source verification, non-root operation, systemd, upgrades, rollback, tunnel-address access, and the installation failures observed during testing.
 
 ```sh
 python3 -m venv .venv
