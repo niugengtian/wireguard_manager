@@ -8,6 +8,7 @@ from pathlib import Path
 from flask import Flask, g, request, session
 
 from .db import close_db, get_db, initialize
+from .policy import normalize_client_allowed_ips
 from .security import load_or_create_secret
 
 
@@ -31,13 +32,23 @@ def create_app(test_config: dict | None = None) -> Flask:
         raise RuntimeError("WG_MANAGER_DATA_DIR must be outside the source directory")
     data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     data_dir.chmod(0o700)
+    reconcile_state_dir = Path(
+        os.environ.get(
+            "WG_RECONCILE_STATE_DIR",
+            data_dir if testing else "/var/lib/wireguard-manager-reconciler",
+        )
+    ).expanduser()
 
+    default_allowed_ips = normalize_client_allowed_ips(
+        os.environ.get("WG_ALLOWED_IPS", "0.0.0.0/0")
+    )
     app = Flask(__name__)
     app.config.from_mapping(
         DATA_DIR=str(data_dir),
         DATABASE=str(data_dir / "manager.sqlite3"),
         INSTALLER_DIR=str(data_dir / "installers"),
         EXPECTED_PEERS_FILE=str(data_dir / "expected-peers.json"),
+        RECONCILE_STATUS_FILE=str(reconcile_state_dir / "reconcile-status.json"),
         SECRET_KEY=os.environ.get("WG_MANAGER_SECRET_KEY") or load_or_create_secret(data_dir),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
@@ -48,14 +59,21 @@ def create_app(test_config: dict | None = None) -> Flask:
         LOGIN_ATTEMPT_LIMIT=int(os.environ.get("WG_LOGIN_ATTEMPT_LIMIT", "5")),
         LOGIN_WINDOW_SECONDS=int(os.environ.get("WG_LOGIN_WINDOW_SECONDS", "300")),
         WG_TUNNEL_CIDR=os.environ.get("WG_TUNNEL_CIDR", "10.44.0.0/24"),
+        WG_RESERVED_IPS=os.environ.get("WG_RESERVED_IPS", ""),
         WG_SERVER_PUBLIC_KEY=os.environ.get(
             "WG_SERVER_PUBLIC_KEY", "mF/8Ssq4S08vD+zL/yQyAvTfGuWn7gR6x+PInwXvWnM="
         ),
         WG_ENDPOINT=os.environ.get("WG_ENDPOINT", "vpn.example.invalid:51820"),
         WG_DNS=os.environ.get("WG_DNS", ""),
-        WG_ALLOWED_IPS=os.environ.get("WG_ALLOWED_IPS", "0.0.0.0/0"),
+        WG_ALLOWED_IPS=default_allowed_ips,
         WG_INTERFACE=os.environ.get("WG_INTERFACE", "wg0"),
         WG_ADAPTER=os.environ.get("WG_ADAPTER", "file"),
+        WG_RECONCILE_SOCKET=os.environ.get(
+            "WG_RECONCILE_SOCKET", "/run/wireguard-manager/reconcile.sock"
+        ),
+        WG_RECONCILE_TIMEOUT_SECONDS=float(
+            os.environ.get("WG_RECONCILE_TIMEOUT_SECONDS", "5")
+        ),
     )
     if test_config:
         app.config.update(test_config)
@@ -63,10 +81,15 @@ def create_app(test_config: dict | None = None) -> Flask:
     network = ipaddress.ip_network(app.config["WG_TUNNEL_CIDR"], strict=True)
     if network.version != 4 or network.num_addresses < 4 or network.num_addresses > 65536:
         raise RuntimeError("WG_TUNNEL_CIDR must be an IPv4 pool with 4-65536 addresses")
-    if app.config["WG_ADAPTER"] not in ("file", "dry-run"):
-        raise RuntimeError("live wg/syncconf is disabled until explicitly approved")
+    app.config["WG_RESERVED_IPS"] = _normalize_reserved_ips(
+        app.config.get("WG_RESERVED_IPS", ""), network
+    )
+    if app.config["WG_ADAPTER"] not in ("file", "dry-run", "reconciler"):
+        raise RuntimeError("WG_ADAPTER must be file, dry-run, or reconciler")
 
-    initialize(app.config["DATABASE"])
+    initialize(
+        app.config["DATABASE"], default_client_allowed_ips=app.config["WG_ALLOWED_IPS"]
+    )
     Path(app.config["INSTALLER_DIR"]).mkdir(parents=True, exist_ok=True, mode=0o700)
 
     from .routes import web
@@ -123,3 +146,20 @@ def _is_within(path: Path, parent: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _normalize_reserved_ips(value, network: ipaddress.IPv4Network) -> frozenset[str]:
+    raw_values = value.split(",") if isinstance(value, str) else value
+    reserved: set[str] = set()
+    for raw in raw_values:
+        candidate = str(raw).strip()
+        if not candidate:
+            continue
+        try:
+            address = ipaddress.ip_address(candidate)
+        except ValueError as error:
+            raise RuntimeError("WG_RESERVED_IPS must contain comma-separated IPv4 addresses") from error
+        if address.version != 4 or address not in network:
+            raise RuntimeError("every WG_RESERVED_IPS address must be inside WG_TUNNEL_CIDR")
+        reserved.add(str(address))
+    return frozenset(reserved)

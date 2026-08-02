@@ -1,0 +1,36 @@
+[Unit]
+Description=WireGuard Manager least-privilege live peer reconciler
+After=network.target wg-quick@wg0.service
+Requires=wg-quick@wg0.service
+Before=wireguard-manager.service
+
+[Service]
+Type=simple
+User=root
+Group=wireguard-manager
+WorkingDirectory=/opt/wireguard-manager
+EnvironmentFile=/etc/wireguard-manager.env
+ExecStart=/opt/wireguard-manager/.venv/bin/wg-manager-reconciler serve
+Restart=on-failure
+RestartSec=2
+UMask=0007
+RuntimeDirectory=wireguard-manager
+RuntimeDirectoryMode=0750
+StateDirectory=wireguard-manager-reconciler
+StateDirectoryMode=0750
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_OVERRIDE
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+ReadWritePaths=/var/lib/wireguard-manager /var/lib/wireguard-manager-reconciler /run/wireguard-manager
+
+[Install]
+WantedBy=multi-user.target

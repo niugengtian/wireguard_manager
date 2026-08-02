@@ -20,6 +20,7 @@ from .services import (
     reset_device,
     set_user_password,
     store_installer,
+    update_device_allowed_ips,
     update_user,
 )
 
@@ -31,7 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""常用示例 / Examples:
   wg-manager user create alice --quota 2
-  wg-manager device create alice laptop --type linux --output ./laptop.conf
+  wg-manager device create alice laptop --type linux --allowed-ips 10.0.0.0/8 --output ./laptop.conf
+  wg-manager device allowed-ips DEVICE_ID --set "10.0.0.0/8, 172.31.0.0/16"
   wg-manager device list --username alice
   wg-manager reconcile
 
@@ -65,12 +67,22 @@ def build_parser() -> argparse.ArgumentParser:
     device_create.add_argument("username")
     device_create.add_argument("name")
     device_create.add_argument("--type", choices=CLIENT_TYPES, required=True, help=bi("客户端类型", "Client type"))
+    device_create.add_argument(
+        "--allowed-ips",
+        help=bi("该设备客户端路由范围；默认使用 WG_ALLOWED_IPS", "Client routes for this device; defaults to WG_ALLOWED_IPS"),
+    )
     device_create.add_argument("--output", type=Path, required=True, help=bi("必须不存在的配置输出路径", "New configuration output path"))
     device_reset = device_commands.add_parser("reset", help=bi("轮换密钥并保留 IP", "Rotate keys and preserve IP"))
     device_reset.add_argument("device_id")
     device_reset.add_argument("--output", type=Path, required=True, help=bi("必须不存在的配置输出路径", "New configuration output path"))
     device_delete = device_commands.add_parser("delete", help=bi("删除设备并释放 IP", "Delete a device and release IP"))
     device_delete.add_argument("device_id")
+    device_allowed_ips = device_commands.add_parser(
+        "allowed-ips",
+        help=bi("修改设备客户端路由范围（需 reset 交付）", "Change client routes (reset required for delivery)"),
+    )
+    device_allowed_ips.add_argument("device_id")
+    device_allowed_ips.add_argument("--set", required=True, dest="allowed_ips", help=bi("逗号分隔 IPv4 CIDR", "Comma-separated IPv4 CIDRs"))
 
     installer = groups.add_parser("installer", help=bi("管理客户端安装包", "Manage downloadable client packages"))
     installer_commands = installer.add_subparsers(dest="command", required=True)
@@ -122,6 +134,7 @@ def _dispatch(args, config) -> None:
             user = _user_by_name(connection, args.username)
             update_user(
                 connection,
+                config,
                 user_id=user["id"],
                 enabled=args.enable,
                 quota=args.quota,
@@ -150,13 +163,28 @@ def _dispatch(args, config) -> None:
                 parameters = (args.username,)
             rows = connection.execute(
                 """SELECT devices.id, users.username, devices.name, devices.client_type,
-                          devices.static_ip, devices.key_generation
+                          devices.static_ip, devices.client_allowed_ips,
+                          CASE WHEN devices.policy_revision = devices.delivered_policy_revision
+                               THEN 'no' ELSE 'yes' END AS reset_required,
+                          devices.key_generation
                    FROM devices JOIN users ON users.id = devices.user_id"""
                 + where
                 + " ORDER BY users.username, devices.name",
                 parameters,
             ).fetchall()
-            _table(("ID", "用户名/USERNAME", "名称/NAME", "类型/TYPE", "隧道IP/TUNNEL_IP", "代次/GEN"), rows)
+            _table(
+                (
+                    "ID",
+                    "用户名/USERNAME",
+                    "名称/NAME",
+                    "类型/TYPE",
+                    "隧道IP/TUNNEL_IP",
+                    "客户端路由/CLIENT_ROUTES",
+                    "需重置/RESET_REQUIRED",
+                    "代次/GEN",
+                ),
+                rows,
+            )
         elif args.command == "create":
             user = _user_by_name(connection, args.username)
             descriptor = _reserve_secret_output(args.output)
@@ -167,6 +195,7 @@ def _dispatch(args, config) -> None:
                     user_id=user["id"],
                     name=args.name,
                     client_type=args.type,
+                    client_allowed_ips=args.allowed_ips,
                     actor_user_id=None,
                     actor_kind="cli",
                 )
@@ -209,6 +238,21 @@ def _dispatch(args, config) -> None:
                 actor_kind="cli",
             )
             print(f"READY: 设备已删除；Peer 移除后释放隧道 IP {released} / device deleted; tunnel IP released after peer removal")
+        elif args.command == "allowed-ips":
+            device = update_device_allowed_ips(
+                connection,
+                device_id=args.device_id,
+                client_allowed_ips=args.allowed_ips,
+                actor_user_id=None,
+                actor_kind="cli",
+            )
+            reset_required = device["policy_revision"] != device["delivered_policy_revision"]
+            suffix = (
+                bi("；请执行 device reset 生成并交付新配置", "; run device reset to generate and deliver the new configuration")
+                if reset_required
+                else bi("；范围未变化", "; routes unchanged")
+            )
+            print(f"READY: 客户端 AllowedIPs 已保存 / client AllowedIPs saved: {device['client_allowed_ips']}{suffix}")
         return
 
     if args.group == "installer":
@@ -241,7 +285,10 @@ def _dispatch(args, config) -> None:
 
     if args.group == "reconcile":
         digest = reconcile_desired_state(connection, config)
-        print(f"READY: 期望 Peer 状态已重建 / desired peer state rebuilt; sha256={digest}")
+        if config["WG_ADAPTER"] == "reconciler":
+            print(f"VERIFIED: 在线 Peer 已热同步并校验 / live peers hot-applied and verified; sha256={digest}")
+        else:
+            print(f"READY: 期望 Peer 状态已重建 / desired peer state rebuilt; sha256={digest}")
 
 
 def _new_password() -> str:

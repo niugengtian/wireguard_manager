@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from .adapter import make_adapter
 from .db import transaction
+from .policy import normalize_client_allowed_ips
 from .security import generate_keypair, hash_password
 
 
@@ -131,6 +132,7 @@ def create_user(
 
 def update_user(
     connection,
+    config,
     *,
     user_id: int,
     enabled: bool,
@@ -140,32 +142,42 @@ def update_user(
 ) -> None:
     if not 0 <= quota <= 100:
         raise DomainError(bi("配额须在 0 到 100 之间", "quota must be between 0 and 100"))
-    with transaction(connection, immediate=True):
-        row = connection.execute("SELECT role FROM users WHERE id = ?", (user_id,)).fetchone()
-        if row is None:
-            raise DomainError(bi("用户不存在", "user not found"), 404)
-        if row["role"] == "admin" and not enabled:
-            enabled_admins = connection.execute(
-                "SELECT count(*) AS count FROM users WHERE role = 'admin' AND enabled = 1"
-            ).fetchone()["count"]
-            if enabled_admins <= 1:
-                raise DomainError(bi("不能禁用最后一个启用的管理员", "cannot disable the last enabled administrator"), 409)
-        connection.execute(
-            """UPDATE users SET
-               session_version = session_version + CASE WHEN enabled <> ? THEN 1 ELSE 0 END,
-               enabled = ?, device_quota = ?,
-               updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
-            (int(enabled), int(enabled), quota, user_id),
-        )
-        audit(
-            connection,
-            action="user.update",
-            object_type="user",
-            object_id=str(user_id),
-            actor_user_id=actor_user_id,
-            actor_kind=actor_kind,
-            details={"enabled": enabled, "quota": quota},
-        )
+    live_applied = False
+    try:
+        with transaction(connection, immediate=True):
+            row = connection.execute("SELECT role, enabled FROM users WHERE id = ?", (user_id,)).fetchone()
+            if row is None:
+                raise DomainError(bi("用户不存在", "user not found"), 404)
+            if row["role"] == "admin" and not enabled:
+                enabled_admins = connection.execute(
+                    "SELECT count(*) AS count FROM users WHERE role = 'admin' AND enabled = 1"
+                ).fetchone()["count"]
+                if enabled_admins <= 1:
+                    raise DomainError(bi("不能禁用最后一个启用的管理员", "cannot disable the last enabled administrator"), 409)
+            connection.execute(
+                """UPDATE users SET
+                   session_version = session_version + CASE WHEN enabled <> ? THEN 1 ELSE 0 END,
+                   enabled = ?, device_quota = ?,
+                   updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
+                (int(enabled), int(enabled), quota, user_id),
+            )
+            state_hash = None
+            if bool(row["enabled"]) != enabled:
+                state_hash = _reconcile(connection, config)
+                live_applied = True
+            audit(
+                connection,
+                action="user.update",
+                object_type="user",
+                object_id=str(user_id),
+                actor_user_id=actor_user_id,
+                actor_kind=actor_kind,
+                details={"enabled": enabled, "quota": quota, "state_sha256": state_hash},
+            )
+    except Exception:
+        if live_applied:
+            _compensate_live_state(connection, config)
+        raise
 
 
 def set_user_password(
@@ -205,6 +217,7 @@ def create_device(
     user_id: int,
     name: str,
     client_type: str,
+    client_allowed_ips: str | None = None,
     actor_user_id: int | None,
     actor_kind: str,
 ) -> tuple[dict, str]:
@@ -213,9 +226,16 @@ def create_device(
         raise DomainError(bi("设备名称须为 1-80 个可打印字符", "device name must be 1-80 printable characters"))
     if client_type not in CLIENT_TYPES:
         raise DomainError(bi("客户端类型无效", "invalid client type"))
+    try:
+        normalized_allowed_ips = normalize_client_allowed_ips(
+            client_allowed_ips or config["WG_ALLOWED_IPS"]
+        )
+    except ValueError as error:
+        raise DomainError(bi("客户端 AllowedIPs 无效", str(error))) from error
     private_key, public_key = generate_keypair()
     device_id = str(uuid.uuid4())
     quota_denied = False
+    live_applied = False
     try:
         with transaction(connection, immediate=True):
             user = connection.execute(
@@ -241,13 +261,28 @@ def create_device(
                 )
                 quota_denied = True
             else:
-                static_ip = allocate_ip(connection, config["WG_TUNNEL_CIDR"])
+                static_ip = allocate_ip(
+                    connection,
+                    config["WG_TUNNEL_CIDR"],
+                    reserved_ips=config.get("WG_RESERVED_IPS", ()),
+                )
                 connection.execute(
-                    """INSERT INTO devices(id, user_id, name, client_type, static_ip, public_key)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (device_id, user_id, name, client_type, static_ip, public_key),
+                    """INSERT INTO devices(
+                         id, user_id, name, client_type, static_ip, public_key,
+                         client_allowed_ips, policy_revision, delivered_policy_revision
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1)""",
+                    (
+                        device_id,
+                        user_id,
+                        name,
+                        client_type,
+                        static_ip,
+                        public_key,
+                        normalized_allowed_ips,
+                    ),
                 )
                 state_hash = _reconcile(connection, config)
+                live_applied = True
                 audit(
                     connection,
                     action="device.create",
@@ -258,6 +293,8 @@ def create_device(
                     details={"client_type": client_type, "state_sha256": state_hash},
                 )
     except Exception as error:
+        if live_applied:
+            _compensate_live_state(connection, config)
         if "UNIQUE constraint failed: devices.user_id, devices.name" in str(error):
             raise DomainError(bi("设备名称已存在", "device name already exists"), 409) from error
         raise
@@ -270,9 +307,14 @@ def create_device(
         "client_type": client_type,
         "static_ip": static_ip,
         "public_key": public_key,
+        "client_allowed_ips": normalized_allowed_ips,
+        "policy_revision": 1,
+        "delivered_policy_revision": 1,
         "key_generation": 1,
     }
-    return device, build_client_config(config, static_ip, private_key)
+    return device, build_client_config(
+        config, static_ip, private_key, client_allowed_ips=normalized_allowed_ips
+    )
 
 
 def reset_device(
@@ -285,34 +327,48 @@ def reset_device(
     actor_kind: str,
 ) -> tuple[dict, str]:
     private_key, public_key = generate_keypair()
-    with transaction(connection, immediate=True):
-        sql = "SELECT * FROM devices WHERE id = ?"
-        parameters: tuple = (device_id,)
-        if owner_user_id is not None:
-            sql += " AND user_id = ?"
-            parameters += (owner_user_id,)
-        device = connection.execute(sql, parameters).fetchone()
-        if device is None:
-            raise DomainError(bi("设备不存在或无权访问", "device not found or not authorized"), 404)
-        connection.execute(
-            """UPDATE devices SET public_key = ?, key_generation = key_generation + 1,
-               updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
-            (public_key, device_id),
-        )
-        state_hash = _reconcile(connection, config)
-        audit(
-            connection,
-            action="device.reset",
-            object_type="device",
-            object_id=device_id,
-            actor_user_id=actor_user_id,
-            actor_kind=actor_kind,
-            details={"ip_preserved": True, "state_sha256": state_hash},
-        )
+    live_applied = False
+    try:
+        with transaction(connection, immediate=True):
+            sql = "SELECT * FROM devices WHERE id = ?"
+            parameters: tuple = (device_id,)
+            if owner_user_id is not None:
+                sql += " AND user_id = ?"
+                parameters += (owner_user_id,)
+            device = connection.execute(sql, parameters).fetchone()
+            if device is None:
+                raise DomainError(bi("设备不存在或无权访问", "device not found or not authorized"), 404)
+            connection.execute(
+                """UPDATE devices SET public_key = ?, key_generation = key_generation + 1,
+                   delivered_policy_revision = policy_revision,
+                   updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
+                (public_key, device_id),
+            )
+            state_hash = _reconcile(connection, config)
+            live_applied = True
+            audit(
+                connection,
+                action="device.reset",
+                object_type="device",
+                object_id=device_id,
+                actor_user_id=actor_user_id,
+                actor_kind=actor_kind,
+                details={"ip_preserved": True, "state_sha256": state_hash},
+            )
+    except Exception:
+        if live_applied:
+            _compensate_live_state(connection, config)
+        raise
     updated = dict(device)
     updated["public_key"] = public_key
     updated["key_generation"] += 1
-    return updated, build_client_config(config, device["static_ip"], private_key)
+    updated["delivered_policy_revision"] = device["policy_revision"]
+    return updated, build_client_config(
+        config,
+        device["static_ip"],
+        private_key,
+        client_allowed_ips=device["client_allowed_ips"],
+    )
 
 
 def delete_device(
@@ -324,30 +380,37 @@ def delete_device(
     actor_user_id: int | None,
     actor_kind: str,
 ) -> str:
-    with transaction(connection, immediate=True):
-        sql = "SELECT static_ip FROM devices WHERE id = ?"
-        parameters: tuple = (device_id,)
-        if owner_user_id is not None:
-            sql += " AND user_id = ?"
-            parameters += (owner_user_id,)
-        device = connection.execute(sql, parameters).fetchone()
-        if device is None:
-            raise DomainError(bi("设备不存在或无权访问", "device not found or not authorized"), 404)
-        connection.execute("DELETE FROM devices WHERE id = ?", (device_id,))
-        state_hash = _reconcile(connection, config)
-        audit(
-            connection,
-            action="device.delete",
-            object_type="device",
-            object_id=device_id,
-            actor_user_id=actor_user_id,
-            actor_kind=actor_kind,
-            details={"ip_release": "immediate_after_peer_removal", "state_sha256": state_hash},
-        )
+    live_applied = False
+    try:
+        with transaction(connection, immediate=True):
+            sql = "SELECT static_ip FROM devices WHERE id = ?"
+            parameters: tuple = (device_id,)
+            if owner_user_id is not None:
+                sql += " AND user_id = ?"
+                parameters += (owner_user_id,)
+            device = connection.execute(sql, parameters).fetchone()
+            if device is None:
+                raise DomainError(bi("设备不存在或无权访问", "device not found or not authorized"), 404)
+            connection.execute("DELETE FROM devices WHERE id = ?", (device_id,))
+            state_hash = _reconcile(connection, config)
+            live_applied = True
+            audit(
+                connection,
+                action="device.delete",
+                object_type="device",
+                object_id=device_id,
+                actor_user_id=actor_user_id,
+                actor_kind=actor_kind,
+                details={"ip_release": "immediate_after_peer_removal", "state_sha256": state_hash},
+            )
+    except Exception:
+        if live_applied:
+            _compensate_live_state(connection, config)
+        raise
     return device["static_ip"]
 
 
-def allocate_ip(connection, cidr: str) -> str:
+def allocate_ip(connection, cidr: str, *, reserved_ips=()) -> str:
     network = ipaddress.ip_network(cidr, strict=True)
     if network.version != 4:
         raise DomainError(bi("仅支持 IPv4 隧道地址池", "only IPv4 tunnel pools are supported"))
@@ -357,6 +420,7 @@ def allocate_ip(connection, cidr: str) -> str:
         int(ipaddress.ip_address(row["static_ip"]))
         for row in connection.execute("SELECT static_ip FROM devices")
     }
+    used.update(int(ipaddress.ip_address(address)) for address in reserved_ips)
     # Network, the first host (server gateway), and broadcast are reserved.
     for value in range(int(network.network_address) + 2, int(network.broadcast_address)):
         if value not in used:
@@ -364,8 +428,20 @@ def allocate_ip(connection, cidr: str) -> str:
     raise DomainError(bi("隧道 IP 地址池已耗尽", "tunnel IP pool exhausted"), 409)
 
 
-def build_client_config(config, static_ip: str, private_key: str) -> str:
+def build_client_config(
+    config,
+    static_ip: str,
+    private_key: str,
+    *,
+    client_allowed_ips: str | None = None,
+) -> str:
     _validate_wireguard_settings(config)
+    try:
+        normalized_allowed_ips = normalize_client_allowed_ips(
+            client_allowed_ips or config["WG_ALLOWED_IPS"]
+        )
+    except ValueError as error:
+        raise DomainError(bi("客户端 AllowedIPs 无效", str(error))) from error
     prefix = ipaddress.ip_network(config["WG_TUNNEL_CIDR"]).prefixlen
     dns_line = f"DNS = {config['WG_DNS']}\n" if config["WG_DNS"] else ""
     return (
@@ -376,9 +452,46 @@ def build_client_config(config, static_ip: str, private_key: str) -> str:
         "[Peer]\n"
         f"PublicKey = {config['WG_SERVER_PUBLIC_KEY']}\n"
         f"Endpoint = {config['WG_ENDPOINT']}\n"
-        f"AllowedIPs = {config['WG_ALLOWED_IPS']}\n"
+        f"AllowedIPs = {normalized_allowed_ips}\n"
         "PersistentKeepalive = 25\n"
     )
+
+
+def update_device_allowed_ips(
+    connection,
+    *,
+    device_id: str,
+    client_allowed_ips: str,
+    actor_user_id: int | None,
+    actor_kind: str,
+):
+    try:
+        normalized = normalize_client_allowed_ips(client_allowed_ips)
+    except ValueError as error:
+        raise DomainError(bi("客户端 AllowedIPs 无效", str(error))) from error
+    with transaction(connection, immediate=True):
+        device = connection.execute(
+            "SELECT * FROM devices WHERE id = ?", (device_id,)
+        ).fetchone()
+        if device is None:
+            raise DomainError(bi("设备不存在", "device not found"), 404)
+        if device["client_allowed_ips"] == normalized:
+            return device
+        connection.execute(
+            """UPDATE devices SET client_allowed_ips = ?, policy_revision = policy_revision + 1,
+               updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
+            (normalized, device_id),
+        )
+        audit(
+            connection,
+            action="device.allowed_ips.update",
+            object_type="device",
+            object_id=device_id,
+            actor_user_id=actor_user_id,
+            actor_kind=actor_kind,
+            details={"client_allowed_ips": normalized, "requires_reset": True},
+        )
+    return connection.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
 
 
 def store_installer(
@@ -526,9 +639,33 @@ def _installer_suffix(filename: str, platform: str) -> str:
 
 def _reconcile(connection, config) -> str:
     adapter = make_adapter(
-        config["WG_ADAPTER"], path=config["EXPECTED_PEERS_FILE"], interface=config["WG_INTERFACE"]
+        config["WG_ADAPTER"],
+        path=config["EXPECTED_PEERS_FILE"],
+        interface=config["WG_INTERFACE"],
+        socket_path=config["WG_RECONCILE_SOCKET"],
+        status_path=config["RECONCILE_STATUS_FILE"],
+        timeout=config["WG_RECONCILE_TIMEOUT_SECONDS"],
     )
-    return adapter.reconcile(connection)
+    try:
+        return adapter.reconcile(connection)
+    except (OSError, RuntimeError) as error:
+        raise DomainError(
+            bi("WireGuard 实时同步失败，数据库事务已回滚", "live WireGuard reconciliation failed; database transaction rolled back"),
+            503,
+        ) from error
+
+
+def _compensate_live_state(connection, config) -> None:
+    try:
+        _reconcile(connection, config)
+    except Exception as error:
+        raise DomainError(
+            bi(
+                "数据库已回滚，但 WireGuard 补偿同步失败；请立即执行 wg-manager reconcile",
+                "database rolled back but WireGuard compensation failed; run wg-manager reconcile immediately",
+            ),
+            503,
+        ) from error
 
 
 def _validate_wireguard_settings(config) -> None:

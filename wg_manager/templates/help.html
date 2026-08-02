@@ -8,17 +8,28 @@
   <ol>
     <li>登录后填写设备名称并选择 Windows、macOS、Linux、iOS 或 Android。<br><span class="muted">Sign in, name the device, and select its client platform.</span></li>
     <li>桌面端下载一次性 <code>.conf</code>；移动端可选择一次性二维码。<br><span class="muted">Download the one-time <code>.conf</code> on desktop, or choose a one-time QR code for mobile.</span></li>
-    <li>配置丢失时使用 reset。旧公钥立即撤销，新配置仅交付一次，静态 IP 默认保留。<br><span class="muted">If a configuration is lost, reset it. The old public key is revoked, a new configuration is delivered once, and the static IP is preserved.</span></li>
-    <li>delete 会先从期望 Peer 状态移除设备，再释放 IP。<br><span class="muted">Delete removes the device from desired peer state before releasing its IP.</span></li>
+    <li>配置丢失时使用 reset。实时模式会撤销旧公钥，新配置仅交付一次，静态 IP 默认保留。<br><span class="muted">If a configuration is lost, reset it. Live mode revokes the old public key, delivers a new configuration once, and preserves the static IP.</span></li>
+    <li>实时模式下，delete 会先从在线接口移除并验证 Peer，再释放 IP；文件模式只重建期望状态。<br><span class="muted">In live mode, delete removes and verifies the peer before releasing its IP. File mode only rebuilds desired state.</span></li>
   </ol>
 </section>
 
 <section class="card">
   <h2>管理员 / Administrators</h2>
-  <p>管理员可创建、启停用户、修改配额、查看或删除设备、查看审计记录，并在核对许可证后上传客户端安装包。</p>
+  <p>管理员可创建、启停用户、修改配额、查看或删除设备、查看审计记录，并在核对许可证后上传客户端安装包。实时模式下，禁用用户会同步撤销其全部在线托管 Peer。</p>
   <p class="muted">Administrators can create/disable users, change quotas, inspect or delete devices, review audits, and upload client packages after checking redistribution rights.</p>
-  <p>应用只生成期望 Peer 文件，不会执行 <code>wg</code> 或 <code>syncconf</code>。接入现网前必须另行确认最小权限 reconciler。</p>
-  <p class="muted">The app only generates desired peer state. It cannot run <code>wg</code> or <code>syncconf</code>; a least-privilege reconciler requires separate approval.</p>
+  <p>实时模式通过本机 Unix Socket 请求最小权限 reconciler 执行 <code>wg syncconf</code>、校验并失败回滚；不会重启 <code>wg0</code>，也不需要 Redis。每台设备对应一个独立 Peer，可同时管理很多 Peer。</p>
+  <p class="muted">Live mode asks a least-privilege reconciler to run and verify <code>wg syncconf</code> over a local Unix socket. It does not restart <code>wg0</code> or require Redis. Every device is an independent peer.</p>
+</section>
+
+<section class="card">
+  <h2>AllowedIPs 的两个含义 / Two meanings of AllowedIPs</h2>
+  <p><strong>服务端 Peer：</strong>每台设备固定为唯一静态隧道 IP <code>/32</code>，例如 <code>10.44.0.27/32</code>；多个 PublicKey 必须放在多个独立 Peer 中。</p>
+  <p class="muted"><strong>Server peer:</strong> each device has one unique tunnel <code>/32</code>; each public key belongs to its own peer.</p>
+  <p><strong>客户端配置：</strong>决定该设备把哪些目标网段送进隧道，可由管理员按设备设置。保存后需要 reset 并一次性交付新配置，服务器无法远程改写已经导入客户端的文件。</p>
+  <p class="muted"><strong>Client configuration:</strong> routes can differ per device. A saved change requires reset and one-time redelivery.</p>
+  <p>若要限制某设备能访问哪些内部目标，应按来源隧道 IP 设置 nftables/防火墙规则；不要把服务端 Peer 的 <code>/32</code> 当成目的访问策略。</p>
+  <p><code>0.0.0.0/0</code> 表示所有 IPv4 流量都走隧道。分流示例：<code>10.255.77.0/24, 172.31.0.0/16</code>；最多支持 32 条 IPv4 CIDR，重叠条目会自动合并。</p>
+  <p class="muted"><code>0.0.0.0/0</code> is full-tunnel IPv4. Split-tunnel routes are comma-separated; up to 32 IPv4 CIDRs are accepted and redundant routes are collapsed.</p>
 </section>
 
 <section class="card">
@@ -26,7 +37,11 @@
   <pre><code>wg-manager --help
 wg-manager user --help
 wg-manager device --help
-wg-manager installer --help</code></pre>
+wg-manager installer --help
+wg-manager device create alice laptop --type linux --allowed-ips '10.255.77.0/24,172.31.0.0/16' --output ./laptop.conf
+wg-manager device allowed-ips DEVICE_ID --set '10.0.0.0/8,172.31.0.0/16'
+wg-manager device reset DEVICE_ID --output ./laptop-reset.conf
+wg-manager reconcile</code></pre>
   <p>CLI 与 Web 共用同一数据库、配额、IP 分配、密钥生命周期和审计规则。配置不会打印到终端，只会写入指定的新文件并设置为 <code>0600</code>。</p>
   <p class="muted">CLI and Web share the same database and rules. Configurations are never printed; they are written to a new caller-selected file with mode <code>0600</code>.</p>
 </section>

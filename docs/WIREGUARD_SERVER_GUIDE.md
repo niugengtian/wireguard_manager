@@ -9,6 +9,7 @@
 
 - [WireGuard installation](https://www.wireguard.com/install/)
 - [WireGuard quick start](https://www.wireguard.com/quickstart/)
+- [wg(8) manual: syncconf](https://git.zx2c4.com/wireguard-tools/about/src/man/wg.8)
 - [Ubuntu Server WireGuard guide](https://ubuntu.com/server/docs/how-to/wireguard-vpn/)
 - [Amazon Linux 2023 package list](https://docs.aws.amazon.com/linux/al2023/release-notes/all-packages.html)
 
@@ -158,9 +159,14 @@ PreDown = iptables -D FORWARD -o %i -m conntrack --ctstate RELATED,ESTABLISHED -
 PreDown = iptables -t nat -D POSTROUTING -s 10.44.0.0/24 -o PUBLIC_INTERFACE -j MASQUERADE
 
 [Peer]
-# 首台测试设备 / first test device
+# 首台测试设备；继续重复 [Peer] 段即可支持更多设备
+# First test device; repeat the [Peer] section for every additional device
 PublicKey = CLIENT_PUBLIC_KEY_BASE64
 AllowedIPs = 10.44.0.2/32
+
+[Peer]
+PublicKey = ANOTHER_CLIENT_PUBLIC_KEY_BASE64
+AllowedIPs = 10.44.0.3/32
 ```
 
 然后锁定权限并做离线解析检查 / Lock permissions and perform an offline parse check:
@@ -247,37 +253,41 @@ sudo journalctl -u wg-quick@wg0 -n 20 --no-pager
 日志默认只看最后 20 行；证据不足时再按时间或错误签名扩大范围。
 Start with the latest 20 log lines; expand by time range or error signature only when necessary.
 
-### 新增 Peer / Add a peer
+### 不重启的手工热更新 / Manual hot apply without restart
 
-1. 备份当前配置：`sudo cp -a /etc/wireguard/wg0.conf /etc/wireguard/wg0.conf.rollback`
-2. 使用 `sudoedit` 增加唯一公钥和唯一 `/32` 地址。
-3. 执行 `sudo wg-quick strip wg0 >/dev/null`。
-4. 执行 `sudo systemctl reload wg-quick@wg0`。
-5. 使用 `sudo wg show wg0` 核对公钥是否出现。
+每个设备使用独立的 `[Peer]` 段和唯一 `/32`。编辑并验证 `wg0.conf` 后，用 WireGuard 官方 `syncconf` 差量应用；它只修改差异，不销毁接口：
 
-Back up, edit with a unique public key and `/32`, validate with `wg-quick strip`, reload the service, and verify the peer.
+```sh
+sudo cp -a /etc/wireguard/wg0.conf /etc/wireguard/wg0.conf.rollback
+sudoedit /etc/wireguard/wg0.conf
+sudo wg-quick strip wg0 >/dev/null
+sudo wg syncconf wg0 <(sudo wg-quick strip wg0)
+sudo wg show wg0 allowed-ips
+```
+
+最后两条使用 Bash/Zsh 的进程替换语法；不要使用 `systemctl restart wg-quick@wg0`。For each device, add an independent `[Peer]` with a unique `/32`, validate it, and use `wg syncconf` to apply only the differences without destroying the interface.
 
 ### Reset 设备 / Reset a device
 
-先从配置中删除旧公钥、加入新公钥；静态 IP 可以保持不变。验证通过后 reload。旧公钥必须不再出现在 `wg show`。
-Remove the old public key, add the new one with the same static IP, validate, then reload. The old key must disappear from `wg show`.
+从配置中删除旧公钥、加入新公钥；静态 IP 可以保持不变。验证后执行上述 `syncconf`。旧公钥必须不再出现在 `wg show`。
+Remove the old public key, add the new one with the same static IP, validate, then run the `syncconf` command above. The old key must disappear from `wg show`.
 
 ### 删除设备 / Delete a device
 
-先删除 Peer 并 reload，确认 `wg show` 已没有该公钥，然后才能重新分配其 IP。
-Remove and reload the peer first; only reuse the IP after confirming that the public key is absent from `wg show`.
+先删除 Peer 并执行 `syncconf`，确认 `wg show` 已没有该公钥，然后才能重新分配其 IP。
+Remove and hot-apply the peer change first; only reuse the IP after confirming that the public key is absent from `wg show`.
 
 ### 回滚 / Roll back
 
 ```sh
 sudo install -o root -g root -m 600 /etc/wireguard/wg0.conf.rollback /etc/wireguard/wg0.conf
 sudo wg-quick strip wg0 >/dev/null
-sudo systemctl reload wg-quick@wg0
+sudo wg syncconf wg0 <(sudo wg-quick strip wg0)
 sudo wg show wg0
 ```
 
-如果 reload 失败且接口已经不可用，可在维护窗口使用 `restart`；这会中断现有隧道。
-If reload fails and the interface is unusable, use `restart` during a maintenance window; it interrupts active tunnels.
+只有接口本身已经不可用且进入维护窗口时才考虑 `restart`；它会中断现有隧道。
+Consider `restart` only if the interface itself is already unusable and a maintenance window is active; restart interrupts tunnels.
 
 ## 11. 故障排查 / Troubleshooting
 
@@ -287,33 +297,39 @@ If reload fails and the interface is unusable, use `restart` during a maintenanc
 | 没有 handshake | UDP 端口、云/上游防火墙、服务端/客户端公钥是否配反、客户端 Endpoint |
 | 有 handshake 但不能访问 | `AllowedIPs`、唯一 IP、`net.ipv4.ip_forward`、FORWARD/NAT 规则和回程路由 |
 | DNS 不工作 | 未运行隧道 DNS 时删除客户端 `DNS`；不要假定 `10.44.0.1` 自动提供 DNS |
-| reload 后 Peer 不一致 | 对比 `wg show` 与 `wg-quick strip wg0`；必要时使用已验证 rollback 文件 |
+| 热更新后 Peer 不一致 | 对比 `wg show` 与 `wg-quick strip wg0`；必要时用 `syncconf` 应用已验证 rollback 文件 |
 | MTU 问题 | 先观察路径与丢包；只有得到证据后再在两端逐步降低 MTU |
 
 ## 12. 与 WireGuard Manager 的边界 / Manager integration boundary
 
 在已经运行本指南服务端的主机上安装 Web/CLI，请使用 [WireGuard Manager 安装与启动指南](WG_MANAGER_INSTALL.md)。该指南不会重装 WireGuard 或覆盖 `wg0.conf`。
 
-当前 Manager 默认只写：
+生产实时模式设置：
+
+```ini
+WG_ADAPTER=reconciler
+WG_INTERFACE=wg0
+```
+
+Web 与 CLI 共用以下链路，不需要 Redis：
 
 ```text
-$WG_MANAGER_DATA_DIR/expected-peers.json
+SQLite transaction
+  -> atomic expected-peers.json (all managed devices, one peer per device)
+  -> local Unix socket
+  -> restricted root reconciler
+  -> merge with unmanaged live peers
+  -> wg syncconf
+  -> verify public keys and unique /32 AllowedIPs
+  -> commit result or rollback live state
 ```
 
-该 JSON 不是 `wg0.conf`，也不会自动应用。可以安全执行：
+服务端与客户端的 `AllowedIPs` 含义不同：
 
-```sh
-wg-manager reconcile
-```
+1. 服务端每个 Peer 的 `AllowedIPs` 是该设备的唯一隧道地址，例如 `10.44.0.27/32`。多个 PublicKey 对应多个独立 `[Peer]`，不能共享相同 `/32`。
+2. 客户端配置的 `AllowedIPs` 是该设备送入隧道的目标路由，可以按设备不同；多条 CIDR 使用英文逗号分隔，例如 `10.255.77.0/24, 172.31.0.0/16`。`0.0.0.0/0` 表示所有 IPv4 流量走隧道。修改后必须 reset 才能一次性交付新配置。
+3. 服务端 Peer `AllowedIPs` 不是目标访问控制。若要限制某设备访问特定 VPC/内部网段，应通过 nftables/防火墙按来源隧道 IP 实施。
 
-`NOT VERIFIED`：真实 reconciler。未来组件必须：
+自动化测试已覆盖 300 个托管 Peer、未托管 Peer 保留、reset/delete 公钥撤销、失败回滚以及无 `restart` 命令。`NOT VERIFIED`：在你的真实服务器上安装并执行在线验收；本文没有操作 AWS 或服务器资源。
 
-1. 运行在独立身份，只拥有读取期望文件和更新指定 WireGuard 接口的最小权限；
-2. 校验期望状态的格式、revision/hash、唯一 IP 和公钥；
-3. 生成 root-only 临时配置并离线验证；
-4. 保存 last-known-good；
-5. 原子应用并验证 `wg show`；
-6. 失败时立即恢复上一个已验证状态；
-7. 日志只记录对象 ID、revision/hash 和结果，不记录私钥、完整配置或真实公网端点。
-
-`NOT VERIFIED`: the live reconciler. It must run under a separate least-privilege identity, validate desired state, retain last-known-good state, apply atomically, verify the live interface, roll back on failure, and keep secrets/endpoints out of logs.
+Automated tests cover 300 managed peers, unmanaged-peer preservation, key revocation on reset/delete, rollback, and the absence of restart commands. `NOT VERIFIED`: installation and live acceptance on your server; this guide has not modified any server or AWS resource.

@@ -14,6 +14,12 @@ def test_cli_device_lifecycle_writes_secret_file_only(monkeypatch, tmp_path, cap
     password = secrets.token_urlsafe(18)
     monkeypatch.setenv("WG_MANAGER_DATA_DIR", str(data_dir))
     monkeypatch.setenv("WG_COOKIE_SECURE", "0")
+    monkeypatch.setenv("WG_ADAPTER", "reconciler")
+    live_revisions = []
+    monkeypatch.setattr(
+        "wg_manager.adapter._request_live_reconcile",
+        lambda _socket, digest, _request_id, _timeout: live_revisions.append(digest),
+    )
     monkeypatch.setattr(cli, "_new_password", lambda: password)
 
     cli.main(["user", "create", "cli-user", "--quota", "2"])
@@ -40,8 +46,28 @@ def test_cli_device_lifecycle_writes_secret_file_only(monkeypatch, tmp_path, cap
     cli.main(["device", "list", "--username", "cli-user"])
     listed = capsys.readouterr().out
     device_id = listed.splitlines()[1].split("\t", 1)[0]
+    cli.main(["user", "update", "cli-user", "--quota", "2", "--disable"])
+    assert "READY:" in capsys.readouterr().out
+    cli.main(["user", "update", "cli-user", "--quota", "2", "--enable"])
+    assert "READY:" in capsys.readouterr().out
+    cli.main(
+        [
+            "device",
+            "allowed-ips",
+            device_id,
+            "--set",
+            "172.31.0.0/16, 10.0.0.0/8",
+        ]
+    )
+    policy_output = capsys.readouterr().out
+    assert "device reset" in policy_output
+    assert "PrivateKey" not in policy_output
     reset_path = tmp_path / "reset.conf"
     cli.main(["device", "reset", device_id, "--output", str(reset_path)])
     assert "PrivateKey" not in capsys.readouterr().out
+    assert "AllowedIPs = 10.0.0.0/8, 172.31.0.0/16" in reset_path.read_text()
     cli.main(["device", "delete", device_id])
     assert "released after peer removal" in capsys.readouterr().out
+    assert len(live_revisions) == 5
+    assert live_revisions[0] != live_revisions[1]
+    assert live_revisions[0] == live_revisions[2]

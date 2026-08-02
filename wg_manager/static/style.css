@@ -19,8 +19,11 @@ label { display: grid; gap: .35rem; font-weight: 650; }
 input, select, button, .button { min-height: 42px; border-radius: 7px; font: inherit; }
 input, select { width: 100%; padding: .55rem .7rem; border: 1px solid #adbbca; background: white; }
 button, .button { border: 0; padding: .6rem .9rem; background: #175cd3; color: white; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+button:hover, .button:hover { filter: brightness(.96); }
+button:focus-visible, .button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible { outline: 3px solid rgba(23, 92, 211, .28); outline-offset: 2px; }
 button.secondary { background: #e8eef7; color: #243b53; }
 button.danger { background: #b42318; }
+.danger-outline { background: white; color: #a6281d; border: 1px solid #e2aaa5; white-space: nowrap; }
 .inline { display: inline-flex; align-items: center; gap: .5rem; }
 .link-button { min-height: auto; padding: 0; background: transparent; font-weight: 500; text-decoration: underline; }
 .controls input { width: 5rem; }
@@ -42,4 +45,43 @@ ol li { margin: .65rem 0; }
 .boundary { margin: 1rem 0; padding: 1rem; border-left: 4px solid #f0a202; background: #fff8e7; }
 .qr-card { max-width: 620px; margin: 2rem auto; text-align: center; }
 .qr { display: block; width: min(100%, 440px); height: auto; margin: 1rem auto; image-rendering: pixelated; }
-@media (max-width: 650px) { .site-header { align-items: flex-start; } nav { flex-wrap: wrap; justify-content: flex-end; } main { margin-top: 1rem; } }
+.section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.section-heading h2, .section-heading p { margin-bottom: .25rem; }
+.count-pill, .badge { display: inline-flex; align-items: center; width: fit-content; border-radius: 999px; white-space: nowrap; }
+.count-pill { padding: .35rem .7rem; background: #eef4ff; color: #1849a9; font-size: .85rem; font-weight: 750; }
+.badge { padding: .2rem .55rem; background: #edf1f6; color: #41566c; font-size: .75rem; font-weight: 750; }
+.role-badge { background: #f0ebff; color: #6941c6; text-transform: uppercase; }
+.status-on { background: #e5f7eb; color: #167044; }
+.status-off { background: #f1f3f5; color: #5c6978; }
+.status-warn { background: #fff3d6; color: #8a5900; }
+.user-list, .device-admin-list { overflow: hidden; border: 1px solid #dbe3ec; border-radius: 10px; }
+.user-row { display: grid; grid-template-columns: minmax(250px, .8fr) minmax(470px, 1.35fr); gap: .8rem 2rem; padding: 1.15rem; }
+.user-row + .user-row, .device-admin-row + .device-admin-row { border-top: 1px solid #e6ebf0; }
+.user-summary, .device-identity { display: grid; align-content: start; gap: .55rem; min-width: 0; }
+.user-title { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; font-size: 1.05rem; }
+.quota-summary { display: grid; gap: .35rem; color: #4b6075; font-size: .88rem; }
+progress { width: min(100%, 270px); height: 7px; accent-color: #175cd3; }
+.user-controls { display: grid; grid-template-columns: minmax(170px, 1fr) 110px auto; align-items: end; gap: .65rem; }
+.user-controls label, .password-form label, .allowed-ips-form label { font-size: .82rem; color: #4b6075; }
+.user-controls button { white-space: nowrap; }
+.password-panel { grid-column: 2; color: #334e68; }
+.password-panel summary { width: fit-content; cursor: pointer; font-weight: 700; }
+.password-form { grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr) auto; align-items: end; margin-top: .8rem; }
+.device-admin-row { display: grid; grid-template-columns: minmax(190px, .65fr) minmax(350px, 1.5fr) auto; align-items: end; gap: 1rem 1.4rem; padding: 1.1rem; }
+.device-identity strong { font-size: 1.02rem; }
+.allowed-ips-form { display: grid; grid-template-columns: minmax(250px, 1fr) auto; align-items: end; gap: .65rem; min-width: 0; }
+.allowed-ips-form button { white-space: nowrap; }
+.device-delete { align-self: end; }
+@media (max-width: 900px) {
+  .user-row, .device-admin-row { grid-template-columns: 1fr; }
+  .password-panel { grid-column: 1; }
+  .device-delete { justify-self: start; }
+}
+@media (max-width: 650px) {
+  .site-header { align-items: flex-start; }
+  nav { flex-wrap: wrap; justify-content: flex-end; }
+  main { margin-top: 1rem; }
+  .section-heading { display: grid; }
+  .user-controls, .password-form, .allowed-ips-form { grid-template-columns: 1fr; }
+  .user-controls button, .password-form button, .allowed-ips-form button { width: 100%; }
+}

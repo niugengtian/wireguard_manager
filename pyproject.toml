@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wireguard-manager"
-version = "0.1.0"
+version = "0.2.0"
 description = "Small server-rendered WireGuard user and device manager"
 requires-python = ">=3.11"
 dependencies = [
@@ -21,6 +21,7 @@ audit = ["pip-audit>=2.10,<3"]
 [project.scripts]
 wg-manager = "wg_manager.cli:main"
 wg-manager-web = "wg_manager.__main__:main"
+wg-manager-reconciler = "wg_manager.reconciler:main"
 
 [tool.setuptools]
 include-package-data = true

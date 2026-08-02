@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
+from wg_manager import create_app
 from wg_manager.db import get_db
 from wg_manager.services import create_device, create_user
 
@@ -149,6 +150,137 @@ def test_concurrent_device_creation_gets_unique_ips(app):
     with ThreadPoolExecutor(max_workers=2) as executor:
         addresses = list(executor.map(create, ("parallel-a", "parallel-b")))
     assert len(addresses) == len(set(addresses)) == 2
+
+
+def test_reserved_existing_peer_ip_is_not_allocated(tmp_path):
+    data_dir = tmp_path / "reserved-data"
+    application = create_app(
+        {
+            "TESTING": True,
+            "DATA_DIR": str(data_dir),
+            "DATABASE": str(data_dir / "manager.sqlite3"),
+            "INSTALLER_DIR": str(data_dir / "installers"),
+            "EXPECTED_PEERS_FILE": str(data_dir / "expected-peers.json"),
+            "WG_RESERVED_IPS": "10.44.0.2, 10.44.0.3",
+        }
+    )
+    with application.app_context():
+        user = create_user(
+            get_db(), username="reserved-user", password=secrets.token_urlsafe(18), quota=1, actor_kind="system"
+        )
+        device, _configuration = create_device(
+            get_db(),
+            application.config,
+            user_id=user["id"],
+            name="new-peer",
+            client_type="linux",
+            actor_user_id=None,
+            actor_kind="system",
+        )
+    assert device["static_ip"] == "10.44.0.4"
+
+
+def test_admin_edits_per_device_client_routes_and_reset_delivers_policy(app, client):
+    password = secrets.token_urlsafe(18)
+    with app.app_context():
+        user = create_user(
+            get_db(), username="route-user", password=password, quota=2, actor_kind="system"
+        )
+        device, _configuration = create_device(
+            get_db(),
+            app.config,
+            user_id=user["id"],
+            name="scoped-laptop",
+            client_type="linux",
+            actor_user_id=user["id"],
+            actor_kind="web",
+        )
+
+    login(client, "route-user", password)
+    denied = client.post(
+        f"/admin/devices/{device['id']}/allowed-ips",
+        data={"_csrf": csrf(client), "client_allowed_ips": "10.0.0.0/8"},
+    )
+    assert denied.status_code == 403
+    logout(client)
+
+    login(client, "runtime-admin", app.runtime_admin_password)
+    updated = client.post(
+        f"/admin/devices/{device['id']}/allowed-ips",
+        data={
+            "_csrf": csrf(client),
+            "client_allowed_ips": "172.31.0.0/16, 10.0.0.0/8",
+        },
+    )
+    assert updated.status_code == 302
+    admin_page = client.get("/admin")
+    assert b"10.0.0.0/8, 172.31.0.0/16" in admin_page.data
+    assert b"Reset required" in admin_page.data
+    with app.app_context():
+        row = get_db().execute("SELECT * FROM devices WHERE id = ?", (device["id"],)).fetchone()
+        assert row["policy_revision"] == 2
+        assert row["delivered_policy_revision"] == 1
+    logout(client)
+
+    login(client, "route-user", password)
+    reset = client.post(
+        f"/devices/{device['id']}/reset",
+        data={"_csrf": csrf(client), "delivery": "download"},
+    )
+    assert reset.status_code == 200
+    assert "AllowedIPs = 10.0.0.0/8, 172.31.0.0/16" in reset.get_data(as_text=True)
+    with app.app_context():
+        row = get_db().execute("SELECT * FROM devices WHERE id = ?", (device["id"],)).fetchone()
+        assert row["policy_revision"] == row["delivered_policy_revision"] == 2
+
+
+def test_web_device_lifecycle_waits_for_live_reconciler(monkeypatch, tmp_path):
+    live_revisions = []
+    monkeypatch.setattr(
+        "wg_manager.adapter._request_live_reconcile",
+        lambda _socket, digest, _request_id, _timeout: live_revisions.append(digest),
+    )
+    data_dir = tmp_path / "live-data"
+    application = create_app(
+        {
+            "TESTING": True,
+            "DATA_DIR": str(data_dir),
+            "DATABASE": str(data_dir / "manager.sqlite3"),
+            "INSTALLER_DIR": str(data_dir / "installers"),
+            "EXPECTED_PEERS_FILE": str(data_dir / "expected-peers.json"),
+            "RECONCILE_STATUS_FILE": str(data_dir / "reconcile-status.json"),
+            "SESSION_COOKIE_SECURE": False,
+            "WG_ADAPTER": "reconciler",
+        }
+    )
+    password = secrets.token_urlsafe(18)
+    with application.app_context():
+        create_user(
+            get_db(), username="live-user", password=password, quota=2, actor_kind="system"
+        )
+    browser = application.test_client()
+    assert login(browser, "live-user", password).status_code == 302
+    created = browser.post(
+        "/devices",
+        data={
+            "_csrf": csrf(browser),
+            "name": "live-laptop",
+            "client_type": "linux",
+            "delivery": "download",
+        },
+    )
+    assert created.status_code == 200
+    with application.app_context():
+        device_id = get_db().execute("SELECT id FROM devices").fetchone()["id"]
+    reset = browser.post(
+        f"/devices/{device_id}/reset",
+        data={"_csrf": csrf(browser), "delivery": "download"},
+    )
+    assert reset.status_code == 200
+    deleted = browser.post(f"/devices/{device_id}/delete", data={"_csrf": csrf(browser)})
+    assert deleted.status_code == 302
+    assert len(live_revisions) == 3
+    assert len(set(live_revisions)) == 3
 
 
 def test_object_authorization_rbac_installer_integrity_and_qr_no_store(app, client):

@@ -1,28 +1,33 @@
 # WireGuard Manager 安装与启动 / Installation and Startup
 
-> 中文为主，英文说明见文末。本指南用于在**已经运行 WireGuard Server** 的 Linux 主机上安装 Manager Web/CLI。它不会重新安装 WireGuard，也不会覆盖 `/etc/wireguard/wg0.conf`。
+> 中文为主，英文说明见文末。本指南用于在**已经运行 WireGuard Server** 的 Linux 主机上安装 Manager Web/CLI 和实时 Peer reconciler。它不会重新安装 WireGuard，也不会覆盖 `/etc/wireguard/wg0.conf`。
 
-状态 / Status: `READY`（安装步骤） · `NOT VERIFIED`（真实 Peer 自动同步）
+状态 / Status: `READY`（安装步骤与实现） · `NOT VERIFIED`（你的真实服务器验收）
 最后核对 / Last verified: **2026-08-02**
 
 ## 1. 组件边界
 
-现有 WireGuard Server 继续负责真实隧道；Manager 是独立的 Python Web/CLI 与 SQLite 应用：
+现有 WireGuard Server 继续负责真实隧道；Manager 分成非 root 管理进程和仅接受本机请求的最小权限 reconciler：
 
 ```text
-WireGuard Server: wg0、握手、路由、真实 Peer
-WireGuard Manager: 用户、设备、配额、密钥生成、静态 IP、期望 Peer 状态
+Web/CLI (wireguard-manager, non-root)
+  -> SQLite transaction + atomic expected-peers.json
+  -> /run/wireguard-manager/reconcile.sock
+  -> reconciler (root, restricted systemd service)
+  -> wg syncconf wg0 -> verify -> rollback on failure
 ```
 
-当前必须使用：
+实时模式必须使用：
 
 ```ini
-WG_ADAPTER=file
+WG_ADAPTER=reconciler
 ```
 
-该模式只原子写入 `$WG_MANAGER_DATA_DIR/expected-peers.json`，不会执行 `wg`、`wg-quick` 或 `syncconf`，因此安装 Manager 不会中断现有隧道。
+每台设备生成一条独立服务端 Peer，所有托管 Peer 都写入同一个期望状态集合。reconciler 读取在线配置、保留未托管 Peer、只差量同步变化并校验结果；新增、reset、delete、用户禁用/启用不会执行 `restart`，现有无关连接保持运行。Redis 不参与此链路。
 
-已有 Peer 不会自动导入 Manager。正式创建设备前，必须先保留或导入现有静态 IP；否则空数据库可能重新分配正在使用的地址。
+Manager 不改写 `/etc/wireguard/wg0.conf`。机器重启时，`wg-quick@wg0` 先加载原配置，reconciler 随后重新应用 Manager 期望状态。已有未托管 Peer 会保留；其隧道 IP 必须写入 `WG_RESERVED_IPS`，避免 Manager 重新分配。若出现地址重叠，reconciler 会拒绝变更而不是覆盖现有 Peer。
+
+reconciler 的 Peer 所有权清单和应用状态保存在 root 控制的 `/var/lib/wireguard-manager-reconciler`，与 Web 可写数据目录分离。Unix Socket 的父目录不可由 Web 用户改名或替换；客户端还会核对对端进程 UID，并使用一次性请求标识，避免把旧状态误认为本次成功。
 
 ## 2. 前置检查
 
@@ -158,10 +163,13 @@ WG_SERVER_PUBLIC_KEY=REPLACE_WITH_EXISTING_WG0_PUBLIC_KEY
 WG_ENDPOINT=REPLACE_WITH_EXISTING_ENDPOINT:51820
 
 WG_TUNNEL_CIDR=10.255.77.0/24
+WG_RESERVED_IPS=10.255.77.2
 WG_ALLOWED_IPS=10.255.77.0/24,172.31.0.0/16
 WG_DNS=
 WG_INTERFACE=wg0
-WG_ADAPTER=file
+WG_ADAPTER=reconciler
+WG_RECONCILE_SOCKET=/run/wireguard-manager/reconcile.sock
+WG_RECONCILE_STATE_DIR=/var/lib/wireguard-manager-reconciler
 
 WG_WEB_HOST=10.255.77.1
 WG_WEB_PORT=8081
@@ -170,6 +178,8 @@ WG_SESSION_MINUTES=30
 ```
 
 `WG_COOKIE_SECURE=0` 只适用于通过加密 WireGuard 隧道访问的 HTTP 页面。若以后使用 Nginx/Caddy 提供 HTTPS，应改成 `WG_COOKIE_SECURE=1`。
+
+`WG_RESERVED_IPS` 只写既有或由其他系统管理的客户端隧道 IP，多个地址用逗号分隔。`WG_ALLOWED_IPS` 是新客户端配置的默认目标路由，不是服务端 Peer 的地址：服务端始终为每台设备使用唯一 `<static_ip>/32`。客户端路由最多 32 条 IPv4 CIDR；`0.0.0.0/0` 表示全隧道，分流时可写 `10.255.77.0/24,172.31.0.0/16`。
 
 锁定配置权限：
 
@@ -189,9 +199,16 @@ sudo -u wireguard-manager -H /bin/sh -c \
 
 ## 7. 安装 systemd 服务
 
-`pip install` 不会自动注册系统服务。项目只提供经过加固的 unit 模板，必须安装一次：
+`pip install` 不会自动注册 systemd 服务。必须同时安装 reconciler 与 Web unit：
 
 ```sh
+sudo install \
+  -o root \
+  -g root \
+  -m 0644 \
+  /opt/wireguard-manager/deploy/wireguard-manager-reconciler.service.example \
+  /etc/systemd/system/wireguard-manager-reconciler.service
+
 sudo install \
   -o root \
   -g root \
@@ -200,19 +217,36 @@ sudo install \
   /etc/systemd/system/wireguard-manager.service
 
 sudo systemctl daemon-reload
+sudo systemctl enable --now wireguard-manager-reconciler
 sudo systemctl enable --now wireguard-manager
 ```
 
 验证：
 
 ```sh
+sudo systemctl is-enabled wireguard-manager-reconciler
+sudo systemctl status wireguard-manager-reconciler --no-pager
 sudo systemctl is-enabled wireguard-manager
 sudo systemctl status wireguard-manager --no-pager
+sudo test -S /run/wireguard-manager/reconcile.sock
 sudo ss -lntp | grep ':8081'
 curl --fail http://10.255.77.1:8081/login
 ```
 
-预期状态是 `enabled`、`active (running)`，并由 Waitress 监听配置的 WireGuard 地址。
+两个 unit 的预期状态都是 `enabled`、`active (running)`；Web 由 `wireguard-manager` 用户运行，只有 reconciler 为受限 root 服务。Web unit 依赖 reconciler，因此不会在热更新通道不可用时假装成功运行。
+
+systemd 会创建 `/run/wireguard-manager`（root 控制、组可连接但不可替换 Socket）和 `/var/lib/wireguard-manager-reconciler`（root 控制、组只读状态）。Web 每次启动前会执行一次 `wg-manager reconcile`，用已提交 SQLite 状态修复异常退出留下的跨进程差异，不会重启 `wg0`。
+
+安装完成后，在得到现网变更确认的前提下做最小在线验证：
+
+```sh
+sudo -u wireguard-manager -H /bin/sh -c \
+  'set -a; . /etc/wireguard-manager.env; set +a; exec /opt/wireguard-manager/.venv/bin/wg-manager reconcile'
+sudo wg show wg0 allowed-ips
+sudo journalctl -u wireguard-manager-reconciler -n 20 --no-pager
+```
+
+实时模式下 `wg-manager reconcile` 返回 `VERIFIED`，代表 reconciler 已完成 `syncconf` 和在线校验；仍建议使用 `wg show` 做操作员复核。文件模式只返回 `READY`，表示期望文件已重建。命令不会重启 `wg0`。
 
 ## 8. 从客户端直接访问
 
@@ -269,7 +303,21 @@ tar -tzf /tmp/wireguard-manager-source.tar.gz | head -20
 
 ### `Unit wireguard-manager.service not found`
 
-Python 包安装不会自动注册 systemd unit。重新执行第 7 节的 `sudo install ...service.example` 和 `sudo systemctl daemon-reload`。
+Python 包安装不会自动注册 systemd unit。重新执行第 7 节两个 `sudo install ...service.example` 命令和 `sudo systemctl daemon-reload`。
+
+### 页面新增设备时报 reconciler 不可用
+
+```sh
+sudo systemctl status wireguard-manager-reconciler --no-pager
+sudo test -S /run/wireguard-manager/reconcile.sock
+sudo journalctl -u wireguard-manager-reconciler -n 20 --no-pager
+```
+
+重点检查 `wg-quick@wg0` 是否 active、环境文件的 `WG_INTERFACE`、数据目录权限，以及 Web 用户是否属于 `wireguard-manager` 组。请求失败时数据库事务和期望文件会回滚，不会交付一个未上线的设备配置。
+
+### 新设备与已有 Peer 地址冲突
+
+把所有已有未托管 Peer 的隧道 IP 写入 `/etc/wireguard-manager.env` 的 `WG_RESERVED_IPS`，然后重启两个 Manager unit。不要把一个现有私钥导入数据库；Manager 只保存其自己生成设备的公钥。
 
 ### 页面显示 Python `HTTPStatus.NOT_FOUND`
 
@@ -315,7 +363,9 @@ sudo journalctl -u wireguard-manager -n 20 --no-pager
 ```sh
 git -C /tmp/wireguard-manager-source rev-parse HEAD
 sudo systemctl stop wireguard-manager
+sudo systemctl stop wireguard-manager-reconciler
 sudo cp -a /var/lib/wireguard-manager /var/lib/wireguard-manager.rollback
+sudo cp -a /var/lib/wireguard-manager-reconciler /var/lib/wireguard-manager-reconciler.rollback
 ```
 
 安装新源码后重新运行 pip 并启动：
@@ -324,31 +374,33 @@ sudo cp -a /var/lib/wireguard-manager /var/lib/wireguard-manager.rollback
 sudo /opt/wireguard-manager/.venv/bin/pip install \
   --no-cache-dir \
   /opt/wireguard-manager
+sudo systemctl start wireguard-manager-reconciler
 sudo systemctl start wireguard-manager
+sudo systemctl status wireguard-manager-reconciler --no-pager
 sudo systemctl status wireguard-manager --no-pager
 ```
 
-回滚时恢复已记录的旧 commit 和数据库备份。不要回滚或覆盖 `/etc/wireguard/wg0.conf`，因为 Manager 当前不拥有该文件。
+停止或升级 Manager 服务不会停止 `wg0`，已有隧道继续运行。回滚时恢复已记录的旧 commit 和数据库备份，再依次启动 reconciler 和 Web。不要回滚或覆盖 `/etc/wireguard/wg0.conf`，因为 Manager 不拥有该文件。
 
 ---
 
 ## English summary
 
-This guide installs WireGuard Manager next to an already running WireGuard server. It does not reinstall WireGuard or modify `wg0.conf`.
+This guide installs WireGuard Manager and its live reconciler next to an already running WireGuard server. It does not reinstall WireGuard, restart the interface, or modify `wg0.conf`.
 
 1. Confirm `wg-quick@wg0` is active and record only the existing server public key, listen port, tunnel network, endpoint, and client routes.
 2. Install Python 3.11+, extract the repository so `/opt/wireguard-manager/pyproject.toml` exists, create a virtual environment, and install the package.
-3. Run the application as the dedicated `wireguard-manager` system user with data under `/var/lib/wireguard-manager`.
-4. Configure `WG_WEB_HOST` with the existing server tunnel address and choose an unused port. Tunnel-only HTTP uses `WG_COOKIE_SECURE=0`; HTTPS requires `WG_COOKIE_SECURE=1`.
-5. Install the provided systemd template manually; Python package installation does not register the service.
-6. Ensure the client `AllowedIPs` contains the server tunnel network, then browse directly to the tunnel address. No SSM, reverse proxy, or public cloud firewall rule is required for tunnel-only access.
-7. Keep `WG_ADAPTER=file`. Existing peers are not imported automatically, so reserve/import their IP addresses before issuing new devices.
+3. Reserve every existing unmanaged tunnel IP with `WG_RESERVED_IPS`, set `WG_ADAPTER=reconciler`, and keep client-route defaults in `WG_ALLOWED_IPS`.
+4. Install both systemd units. Web/CLI run as non-root; the restricted reconciler alone calls `wg syncconf` through an authenticated local Unix socket. Root-owned reconciler metadata is separated from the Web-writable data directory.
+5. Device create/reset/delete and user disable/enable synchronously apply and verify live peer state. Unrelated peers and sessions are preserved; failures roll back.
+6. Configure `WG_WEB_HOST` with the existing server tunnel address and choose an unused port. Tunnel-only HTTP uses `WG_COOKIE_SECURE=0`; HTTPS requires `WG_COOKIE_SECURE=1`.
+7. Ensure the client `AllowedIPs` contains the server tunnel network, then browse directly to the tunnel address. No SSM, reverse proxy, or public cloud firewall rule is required for tunnel-only access.
 
 Troubleshooting rules:
 
 - Missing `pyproject.toml`: the source was not extracted at the expected directory level.
-- Missing systemd unit: install `deploy/wireguard-manager.service.example` into `/etc/systemd/system/` and run `daemon-reload`.
+- Missing systemd units: install both templates under `deploy/` into `/etc/systemd/system/` and run `daemon-reload`.
 - Generic Python `File not found` 404: another process owns the port; inspect it and choose an unused port.
 - Local curl works but the client cannot connect: check client routes and the host firewall on `wg0`.
 
-`NOT VERIFIED`: automatic live peer reconciliation. The current file adapter deliberately leaves the existing WireGuard interface unchanged.
+`NOT VERIFIED`: deployment and live acceptance on your server. Automated tests verify the reconciler behavior without touching a real interface.

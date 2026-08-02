@@ -44,6 +44,7 @@ from .services import (
     reset_device,
     set_user_password,
     store_installer,
+    update_device_allowed_ips,
     update_user,
     verified_installer_path,
 )
@@ -60,6 +61,7 @@ def bilingual_http_error(error: HTTPException):
         404: bi("页面或对象不存在", "Page or object not found"),
         413: bi("上传内容过大", "Upload too large"),
         429: bi("请求过多，请稍后再试", "Too many requests; try later"),
+        503: bi("WireGuard 实时同步暂不可用", "Live WireGuard reconciliation unavailable"),
     }
     description = str(error.description)
     if " / " not in description:
@@ -392,7 +394,12 @@ def admin_dashboard():
         "SELECT * FROM audit_events ORDER BY id DESC LIMIT 100"
     ).fetchall()
     return render_template(
-        "admin.html", users=users, devices=devices, installers=installers, events=events
+        "admin.html",
+        users=users,
+        devices=devices,
+        installers=installers,
+        events=events,
+        live_reconcile=current_app.config["WG_ADAPTER"] == "reconciler",
     )
 
 
@@ -423,6 +430,7 @@ def admin_update_user(user_id: int):
     try:
         update_user(
             get_db(),
+            current_app.config,
             user_id=user_id,
             enabled=request.form.get("enabled") == "1",
             quota=int(request.form.get("quota", "0")),
@@ -471,6 +479,33 @@ def admin_delete_device(device_id: str):
             actor_kind="web",
         )
         flash(bi("设备已删除", "Device deleted."), "success")
+    except DomainError as error:
+        flash(error.message, "error")
+    return redirect(url_for("web.admin_dashboard"))
+
+
+@web.post("/admin/devices/<device_id>/allowed-ips")
+@admin_required
+@csrf_required
+def admin_update_device_allowed_ips(device_id: str):
+    try:
+        updated = update_device_allowed_ips(
+            get_db(),
+            device_id=device_id,
+            client_allowed_ips=request.form.get("client_allowed_ips", ""),
+            actor_user_id=g.user["id"],
+            actor_kind="web",
+        )
+        if updated["policy_revision"] != updated["delivered_policy_revision"]:
+            flash(
+                bi(
+                    "AllowedIPs 已保存；设备必须 reset 后下载新配置",
+                    "AllowedIPs saved; the device must reset and download a new configuration.",
+                ),
+                "success",
+            )
+        else:
+            flash(bi("AllowedIPs 未发生变化", "AllowedIPs did not change."), "success")
     except DomainError as error:
         flash(error.message, "error")
     return redirect(url_for("web.admin_dashboard"))

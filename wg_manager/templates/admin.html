@@ -2,7 +2,11 @@
 {% block title %}管理后台 / Administration · WireGuard Manager{% endblock %}
 {% block content %}
 <h1>管理后台 / Administration</h1>
-<p>这里只管理期望 Peer 状态，不能执行 <code>wg</code> 或 <code>syncconf</code>。 <span class="muted">Desired peer state only; live commands are disabled.</span></p>
+{% if live_reconcile %}
+<div class="notice success"><strong>实时热更新已启用 / Live hot apply enabled</strong><br>设备新增、reset、delete 会通过 <code>wg syncconf</code> 差量生效并校验，不重启接口。<span class="muted"> Device create, reset, and delete are applied and verified without restarting the interface.</span></div>
+{% else %}
+<div class="notice"><strong>当前为文件模式 / File mode</strong><br>这里只重建期望 Peer 状态；设置 <code>WG_ADAPTER=reconciler</code> 并启动最小权限 reconciler 后才会实时生效。<span class="muted"> Enable the reconciler adapter for live apply.</span></div>
+{% endif %}
 
 <section class="card">
   <h2>创建用户 / Create user</h2>
@@ -15,41 +19,61 @@
   </form>
 </section>
 
-<section class="card">
-  <h2>用户 / Users</h2>
-  <div class="table-wrap"><table>
-    <thead><tr><th>用户名 / Username</th><th>角色 / Role</th><th>设备 / Devices</th><th>状态与配额 / Enabled & quota</th></tr></thead>
-    <tbody>{% for user in users %}<tr>
-      <td>{{ user['username'] }}</td><td>{{ user['role'] }}</td><td>{{ user['device_count'] }}</td>
-      <td><form class="inline controls" method="post" action="{{ url_for('web.admin_update_user', user_id=user['id']) }}">
+<section class="card users-card">
+  <div class="section-heading">
+    <div><h2>用户 / Users</h2><p class="muted">状态、设备占用与安全操作集中管理 / Manage status, device usage, and security actions.</p></div>
+    <span class="count-pill">{{ users|length }} 位用户 / users</span>
+  </div>
+  <div class="user-list" role="list">
+    {% for user in users %}
+    <article class="user-row" role="listitem">
+      <div class="user-summary">
+        <div class="user-title"><strong>{{ user['username'] }}</strong>
+          <span class="badge role-badge">{{ user['role'] }}</span>
+          <span class="badge {% if user['enabled'] %}status-on{% else %}status-off{% endif %}">{% if user['enabled'] %}启用 / Enabled{% else %}禁用 / Disabled{% endif %}</span>
+        </div>
+        <div class="quota-summary">
+          <span>{{ user['device_count'] }} / {{ user['device_quota'] }} 设备 / devices</span>
+          <progress value="{{ user['device_count'] }}" max="{{ user['device_quota'] if user['device_quota'] > 0 else 1 }}" aria-label="{{ user['username'] }} device quota"></progress>
+        </div>
+      </div>
+      <form class="user-controls" method="post" action="{{ url_for('web.admin_update_user', user_id=user['id']) }}">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-        <select name="enabled"><option value="1"{% if user['enabled'] %} selected{% endif %}>启用 / enabled</option><option value="0"{% if not user['enabled'] %} selected{% endif %}>禁用 / disabled</option></select>
-        <input aria-label="Device quota" type="number" name="quota" min="0" max="100" value="{{ user['device_quota'] }}" required>
-        <button class="secondary" type="submit">保存 / Save</button>
+        <label>账号状态 / Status<select name="enabled"><option value="1"{% if user['enabled'] %} selected{% endif %}>启用 / Enabled</option><option value="0"{% if not user['enabled'] %} selected{% endif %}>禁用 / Disabled</option></select></label>
+        <label>设备配额 / Quota<input type="number" name="quota" min="0" max="100" value="{{ user['device_quota'] }}" required></label>
+        <button type="submit">保存更改 / Save changes</button>
       </form>
-      <details><summary>重置密码 / Reset password</summary>
-        <form method="post" action="{{ url_for('web.admin_reset_user_password', user_id=user['id']) }}">
+      <details class="password-panel"><summary>重置密码与撤销会话 / Reset password & revoke sessions</summary>
+        <form class="password-form" method="post" action="{{ url_for('web.admin_reset_user_password', user_id=user['id']) }}">
           <input type="hidden" name="_csrf" value="{{ csrf_token }}">
           <label>新密码 / New password<input type="password" name="password" minlength="12" maxlength="1024" required autocomplete="new-password"></label>
           <label>再次输入 / Repeat password<input type="password" name="password_confirm" minlength="12" maxlength="1024" required autocomplete="new-password"></label>
-          <button class="secondary" type="submit">重置并撤销会话 / Reset and revoke sessions</button>
+          <button class="danger-outline" type="submit">重置密码 / Reset password</button>
         </form>
-      </details></td>
-    </tr>{% endfor %}</tbody>
-  </table></div>
+      </details>
+    </article>
+    {% endfor %}
+  </div>
 </section>
 
 <section class="card">
-  <h2>全部设备 / All devices</h2>
-  {% if devices %}<div class="table-wrap"><table>
-    <thead><tr><th>用户 / User</th><th>名称 / Name</th><th>类型 / Type</th><th>隧道 IP / Tunnel IP</th><th>代次 / Generation</th><th>操作 / Action</th></tr></thead>
-    <tbody>{% for device in devices %}<tr>
-      <td>{{ device['username'] }}</td><td>{{ device['name'] }}</td><td>{{ device['client_type'] }}</td><td><code>{{ device['static_ip'] }}</code></td><td>{{ device['key_generation'] }}</td>
-      <td><form method="post" action="{{ url_for('web.admin_delete_device', device_id=device['id']) }}">
-        <input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="danger" type="submit">删除 / Delete</button>
-      </form></td>
-    </tr>{% endfor %}</tbody>
-  </table></div>{% else %}<p class="empty">尚无设备 / No devices.</p>{% endif %}
+  <div class="section-heading"><div><h2>全部设备与 Peer / All devices & peers</h2><p class="muted">每台设备对应一个独立服务端 Peer（唯一 <code>/32</code>）；客户端路由可按设备设置，变更后需 reset 才能安全交付。</p></div><span class="count-pill">{{ devices|length }} Peers</span></div>
+  {% if devices %}<div class="device-admin-list">
+    {% for device in devices %}<article class="device-admin-row">
+      <div class="device-identity">
+        <strong>{{ device['name'] }}</strong><span class="muted">{{ device['username'] }} · {{ device['client_type'] }}</span>
+        <div><span class="muted">服务端 AllowedIPs / Server route</span> <code>{{ device['static_ip'] }}/32</code> <span class="badge">Gen {{ device['key_generation'] }}</span>{% if device['policy_revision'] != device['delivered_policy_revision'] %} <span class="badge status-warn">等待 reset / Reset required</span>{% endif %}</div>
+      </div>
+      <form class="allowed-ips-form" method="post" action="{{ url_for('web.admin_update_device_allowed_ips', device_id=device['id']) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <label>客户端 AllowedIPs（逗号分隔） / Client routes (comma-separated)<input name="client_allowed_ips" value="{{ device['client_allowed_ips'] }}" required maxlength="800" spellcheck="false" placeholder="10.255.77.0/24, 172.31.0.0/16"></label>
+        <button class="secondary" type="submit">保存范围 / Save scope</button>
+      </form>
+      <form class="device-delete" method="post" action="{{ url_for('web.admin_delete_device', device_id=device['id']) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="danger-outline" type="submit">删除设备 / Delete</button>
+      </form>
+    </article>{% endfor %}
+  </div>{% else %}<p class="empty">尚无设备 / No devices.</p>{% endif %}
 </section>
 
 <section class="card">

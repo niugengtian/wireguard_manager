@@ -6,16 +6,19 @@
 
 `READY`：一个小型、安全、可运行的 WireGuard 用户与设备管理站点。技术栈只有 Python、Flask、服务端模板和本地 SQLite，同时提供使用同一套业务规则的本机 CLI。
 
-它只生成确定性的期望 Peer 状态文件，**不会**执行 `wg`、`wg-quick` 或 `syncconf`。真实 WireGuard 同步必须等待人工确认后，通过独立的最小权限 reconciler 接入。
+Web 与 CLI 的设备新增、reset、delete，以及用户禁用/启用，都先原子重建期望状态，再通过独立 Unix Socket 请求最小权限 reconciler 执行 `wg syncconf`、在线校验并在失败时回滚。它不会执行 `wg-quick restart`，不会改写 `/etc/wireguard/wg0.conf`，也不需要 Redis；系统重启时 reconciler 会在 `wg0` 启动后重新应用期望 Peer。
+
+`AllowedIPs` 可以有多条，使用英文逗号分隔，例如 `10.255.77.0/24, 172.31.0.0/16`。`0.0.0.0/0` 只代表全 IPv4 隧道；它不是数量限制。系统最多接受 32 条严格 IPv4 CIDR，并自动去重和合并被更大网段覆盖的条目。
 
 ### 能做什么
 
-- 管理员创建、启停用户，设置设备配额，查看或删除设备和审计记录。
+- 管理员创建、启停用户，设置设备配额，查看或删除设备和审计记录；禁用用户会立即从在线接口撤销其全部托管 Peer，重新启用会恢复。
 - 用户登录后按 Windows、macOS、Linux、iOS、Android 类型自助新增设备。
 - 每台设备使用独立密钥和全局唯一静态隧道 IP；超过配额会被拒绝。
 - 配置不可编辑，只能新增、`reset` 或 `delete`。
 - `reset` 撤销旧公钥、生成新密钥，默认保留静态 IP。
-- `delete` 先从期望 Peer 状态移除设备，再立即释放 IP；旧公钥仍然无效。
+- `delete` 先从期望状态和在线接口移除设备并验证，再释放 IP；旧公钥仍然无效。
+- 每台设备对应一条独立服务端 Peer，服务端 `AllowedIPs` 固定为唯一隧道 IP `/32`；客户端 `AllowedIPs` 可按设备设置。
 - 桌面端一次性下载 `.conf`；移动端可显示一次性二维码。
 - 管理员核对许可后可上传客户端安装包，系统记录平台、架构、版本、SHA-256 和大小。
 - Web 和 CLI 共用 SQLite、配额、IP 分配、密钥生命周期、RBAC 和审计规则。
@@ -64,12 +67,15 @@ export WG_COOKIE_SECURE=1
 | 环境变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | `WG_MANAGER_DATA_DIR` | 用户数据目录 | SQLite、会话密钥、安装包、期望 Peer 文件；必须位于源码外 |
-| `WG_TUNNEL_CIDR` | `10.44.0.0/24` | 客户端静态 IP 池；网络地址、首个主机地址和广播地址保留 |
+| `WG_TUNNEL_CIDR` | `10.44.0.0/24` | 客户端静态 IP 池；可使用最大 `/16` 支持更多 Peer |
+| `WG_RESERVED_IPS` | 空 | 逗号分隔的既有/外部 Peer 隧道 IP，Manager 永不分配 |
 | `WG_SERVER_PUBLIC_KEY` | 非生产占位值 | 写入客户端配置的服务端公钥 |
 | `WG_ENDPOINT` | `vpn.example.invalid:51820` | 客户端连接端点 |
 | `WG_DNS` | 空 | 可选客户端 DNS；仅在确实提供 DNS 服务时设置 |
-| `WG_ALLOWED_IPS` | `0.0.0.0/0` | 进入隧道的路由；未配置 IPv6 时不要加入 `::/0` |
-| `WG_ADAPTER` | `file` | 只允许 `file` 或 `dry-run` |
+| `WG_ALLOWED_IPS` | `0.0.0.0/0` | 新设备默认客户端路由；可按设备覆盖，未配置 IPv6 时不要加入 `::/0` |
+| `WG_ADAPTER` | `file` | 生产实时模式设为 `reconciler`；`file`/`dry-run` 只用于离线验证 |
+| `WG_RECONCILE_SOCKET` | `/run/wireguard-manager/reconcile.sock` | Web/CLI 与 root reconciler 的本机 Unix Socket |
+| `WG_RECONCILE_STATE_DIR` | `/var/lib/wireguard-manager-reconciler` | root reconciler 独占的 Peer 所有权清单和带请求标识的应用状态 |
 | `WG_MAX_INSTALLER_BYTES` | 200 MiB | 安装包最大大小 |
 
 生成可用配置前，必须替换所有占位 WireGuard 参数。
@@ -89,14 +95,17 @@ export WG_COOKIE_SECURE=1
 .venv/bin/wg-manager user list
 
 # 配置输出路径必须不存在；CLI 不会把私钥或配置打印到终端
-.venv/bin/wg-manager device create alice workstation --type linux --output /secure/path/workstation.conf
+.venv/bin/wg-manager device create alice workstation --type linux --allowed-ips '10.255.77.0/24,172.31.0.0/16' --output /secure/path/workstation.conf
 .venv/bin/wg-manager device list --username alice
+.venv/bin/wg-manager device allowed-ips DEVICE_ID --set '10.0.0.0/8,172.31.0.0/16'
 .venv/bin/wg-manager device reset DEVICE_ID --output /secure/path/workstation-reset.conf
 .venv/bin/wg-manager device delete DEVICE_ID
 
-# 只重建期望 Peer 文件，不接触现网接口
+# 在 reconciler 模式下重建、热应用并校验全部托管 Peer
 .venv/bin/wg-manager reconcile
 ```
+
+客户端 `AllowedIPs` 决定该设备把哪些目标网段送入隧道。修改已保存策略后必须 reset 才能生成并一次性交付新客户端配置；服务器无法远程改写已经导入客户端的文件。服务端每个 Peer 的 `AllowedIPs = <该设备静态隧道 IP>/32` 用于身份与回程路由，不能拿它替代目的网段访问控制；如需限制某设备能访问的内部目标，应按来源隧道 IP 配置 nftables/防火墙策略。
 
 ### 安装包再分发边界
 
@@ -114,9 +123,9 @@ export WG_COOKIE_SECURE=1
 .venv/bin/pip-audit --cache-dir /tmp/wg-manager-pip-audit-cache
 ```
 
-自动化验收覆盖 quota=2、一次性配置、超额拒绝、reset 撤销旧公钥并保留 IP、delete 移除 Peer 并复用 IP、并发唯一 IP、对象授权、安装包 SHA-256、CSRF、登录限速、CLI `0600` 文件以及敏感值不落盘。真实浏览器验收见 [ACCEPTANCE.md](ACCEPTANCE.md)。
+自动化验收覆盖 quota=2、一次性配置、超额拒绝、reset 撤销旧公钥并保留 IP、delete 移除 Peer 并复用 IP、并发唯一 IP、对象授权、安装包 SHA-256、CSRF、登录限速、CLI `0600` 文件、敏感值不落盘，以及 300 个托管 Peer 热应用、未托管 Peer 保留、失败回滚、Web/CLI 同步等待在线应用。真实浏览器验收见 [ACCEPTANCE.md](ACCEPTANCE.md)。
 
-`NOT VERIFIED`：真实 WireGuard reconciler、AWS 部署与 AWS 资源。它们均未连接或操作。
+`NOT VERIFIED`：你的真实 WireGuard 服务器部署与 AWS 资源；本项目没有连接或操作它们。
 
 ---
 
@@ -124,13 +133,16 @@ export WG_COOKIE_SECURE=1
 
 `READY`: a small, secure WireGuard user/device configuration manager built with Flask, server-rendered templates, and local SQLite. A local CLI shares exactly the same business rules.
 
-The application only emits deterministic desired peer state. It **cannot** execute `wg`, `wg-quick`, or `syncconf`; live reconciliation requires separate approval and a least-privilege reconciler.
+Web and CLI mutations atomically rebuild desired state and ask a separate least-privilege reconciler over a local Unix socket to run `wg syncconf`, verify the live interface, and roll back on failure. No interface restart, Redis, or rewrite of `/etc/wireguard/wg0.conf` is required.
+
+Client `AllowedIPs` accepts up to 32 comma-separated IPv4 CIDRs. `0.0.0.0/0` means full-tunnel IPv4; it does not mean only one entry is supported. Redundant routes are normalized and collapsed.
 
 ### Features
 
 - Admin user enable/disable, quota, device, installer, and audit management.
 - Self-service Windows, macOS, Linux, iOS, and Android device creation.
 - Independent keys and a globally unique static tunnel IP per device.
+- One independent server peer per device, with a unique tunnel `/32`; per-device client `AllowedIPs` policies.
 - Immutable configurations: create, reset, or delete only.
 - Reset revokes the old public key, creates a new key, and preserves the IP.
 - Delete removes the desired peer before immediately releasing the IP.
@@ -172,7 +184,8 @@ Run as a dedicated non-root account. The default bind is `127.0.0.1:8080`; termi
 ```sh
 .venv/bin/wg-manager --help
 .venv/bin/wg-manager user create alice --quota 2
-.venv/bin/wg-manager device create alice workstation --type linux --output /secure/path/workstation.conf
+.venv/bin/wg-manager device create alice workstation --type linux --allowed-ips '10.255.77.0/24,172.31.0.0/16' --output /secure/path/workstation.conf
+.venv/bin/wg-manager device allowed-ips DEVICE_ID --set '10.0.0.0/8,172.31.0.0/16'
 .venv/bin/wg-manager device reset DEVICE_ID --output /secure/path/workstation-reset.conf
 .venv/bin/wg-manager device delete DEVICE_ID
 .venv/bin/wg-manager reconcile
@@ -190,4 +203,6 @@ Passwords are prompted without echo. Configurations are never printed and can on
 
 See [ACCEPTANCE.md](ACCEPTANCE.md) for automated and real-browser evidence.
 
-`NOT VERIFIED`: live WireGuard reconciliation and AWS deployment/resources. No live interface or AWS resource has been touched.
+Changing client `AllowedIPs` requires a reset to deliver a new one-time client configuration; a server cannot remotely rewrite a configuration already imported by a client. Server peer `AllowedIPs` remains the device's unique tunnel `/32`. Destination authorization belongs in a firewall policy keyed by the source tunnel IP.
+
+`NOT VERIFIED`: deployment on your live WireGuard server and AWS resources. No live interface or AWS resource has been touched.

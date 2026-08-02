@@ -1,6 +1,7 @@
 [Unit]
-Description=WireGuard Manager web UI (desired state only)
-After=network.target
+Description=WireGuard Manager web UI and CLI service
+After=network.target wireguard-manager-reconciler.service
+Requires=wireguard-manager-reconciler.service
 
 [Service]
 Type=simple
@@ -8,6 +9,7 @@ User=wireguard-manager
 Group=wireguard-manager
 WorkingDirectory=/opt/wireguard-manager
 EnvironmentFile=/etc/wireguard-manager.env
+ExecStartPre=/opt/wireguard-manager/.venv/bin/wg-manager reconcile
 ExecStart=/opt/wireguard-manager/.venv/bin/wg-manager-web
 Restart=on-failure
 RestartSec=3

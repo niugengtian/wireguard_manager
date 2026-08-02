@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS devices (
     client_type TEXT NOT NULL CHECK (client_type IN ('windows','macos','linux','ios','android')),
     static_ip TEXT NOT NULL UNIQUE,
     public_key TEXT NOT NULL UNIQUE,
+    client_allowed_ips TEXT NOT NULL DEFAULT '0.0.0.0/0',
+    policy_revision INTEGER NOT NULL DEFAULT 1 CHECK (policy_revision > 0),
+    delivered_policy_revision INTEGER NOT NULL DEFAULT 1 CHECK (delivered_policy_revision > 0),
     key_generation INTEGER NOT NULL DEFAULT 1 CHECK (key_generation > 0),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -84,7 +87,7 @@ def connect(path: str | Path) -> sqlite3.Connection:
     return connection
 
 
-def initialize(path: str | Path) -> None:
+def initialize(path: str | Path, *, default_client_allowed_ips: str = "0.0.0.0/0") -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     connection = connect(path)
@@ -95,6 +98,19 @@ def initialize(path: str | Path) -> None:
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
         if "session_version" not in columns:
             connection.execute("ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 1")
+        device_columns = {row["name"] for row in connection.execute("PRAGMA table_info(devices)")}
+        if "client_allowed_ips" not in device_columns:
+            connection.execute("ALTER TABLE devices ADD COLUMN client_allowed_ips TEXT NOT NULL DEFAULT ''")
+        if "policy_revision" not in device_columns:
+            connection.execute("ALTER TABLE devices ADD COLUMN policy_revision INTEGER NOT NULL DEFAULT 1")
+        if "delivered_policy_revision" not in device_columns:
+            connection.execute(
+                "ALTER TABLE devices ADD COLUMN delivered_policy_revision INTEGER NOT NULL DEFAULT 1"
+            )
+        connection.execute(
+            "UPDATE devices SET client_allowed_ips = ? WHERE client_allowed_ips = ''",
+            (default_client_allowed_ips,),
+        )
     finally:
         connection.close()
     path.chmod(0o600)
@@ -121,4 +137,8 @@ def transaction(connection: sqlite3.Connection, *, immediate: bool = False):
         connection.rollback()
         raise
     else:
-        connection.commit()
+        try:
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
