@@ -39,9 +39,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         )
     ).expanduser()
 
-    default_allowed_ips = normalize_client_allowed_ips(
-        os.environ.get("WG_ALLOWED_IPS", "0.0.0.0/0")
-    )
+    tunnel_cidr = os.environ.get("WG_TUNNEL_CIDR", "10.44.0.0/24")
     app = Flask(__name__)
     app.config.from_mapping(
         DATA_DIR=str(data_dir),
@@ -58,14 +56,14 @@ def create_app(test_config: dict | None = None) -> Flask:
         MAX_CONTENT_LENGTH=int(os.environ.get("WG_MAX_INSTALLER_BYTES", str(200 * 1024 * 1024))) + 1024 * 1024,
         LOGIN_ATTEMPT_LIMIT=int(os.environ.get("WG_LOGIN_ATTEMPT_LIMIT", "5")),
         LOGIN_WINDOW_SECONDS=int(os.environ.get("WG_LOGIN_WINDOW_SECONDS", "300")),
-        WG_TUNNEL_CIDR=os.environ.get("WG_TUNNEL_CIDR", "10.44.0.0/24"),
+        WG_TUNNEL_CIDR=tunnel_cidr,
         WG_RESERVED_IPS=os.environ.get("WG_RESERVED_IPS", ""),
         WG_SERVER_PUBLIC_KEY=os.environ.get(
             "WG_SERVER_PUBLIC_KEY", "mF/8Ssq4S08vD+zL/yQyAvTfGuWn7gR6x+PInwXvWnM="
         ),
         WG_ENDPOINT=os.environ.get("WG_ENDPOINT", "vpn.example.invalid:51820"),
         WG_DNS=os.environ.get("WG_DNS", ""),
-        WG_ALLOWED_IPS=default_allowed_ips,
+        WG_ALLOWED_IPS=os.environ.get("WG_ALLOWED_IPS"),
         WG_INTERFACE=os.environ.get("WG_INTERFACE", "wg0"),
         WG_ADAPTER=os.environ.get("WG_ADAPTER", "file"),
         WG_RECONCILE_SOCKET=os.environ.get(
@@ -77,6 +75,12 @@ def create_app(test_config: dict | None = None) -> Flask:
     )
     if test_config:
         app.config.update(test_config)
+
+    # Split tunnel is the safe default. Full-tunnel routing must be an explicit
+    # operator choice after forwarding, NAT, DNS, and recovery access are ready.
+    app.config["WG_ALLOWED_IPS"] = normalize_client_allowed_ips(
+        app.config.get("WG_ALLOWED_IPS") or app.config["WG_TUNNEL_CIDR"]
+    )
 
     network = ipaddress.ip_network(app.config["WG_TUNNEL_CIDR"], strict=True)
     if network.version != 4 or network.num_addresses < 4 or network.num_addresses > 65536:

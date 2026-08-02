@@ -68,6 +68,7 @@
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
         <label>客户端 AllowedIPs（逗号分隔） / Client routes (comma-separated)<input name="client_allowed_ips" value="{{ device['client_allowed_ips'] }}" required maxlength="800" spellcheck="false" placeholder="10.255.77.0/24, 172.31.0.0/16"></label>
         <button class="secondary" type="submit">保存范围 / Save scope</button>
+        <label class="checkbox full-tunnel-confirm"><input type="checkbox" name="confirm_full_tunnel" value="1"> 我确认 <code>0.0.0.0/0</code> 可中断当前网络 / I accept the full-tunnel lockout risk</label>
       </form>
       <form class="device-delete" method="post" action="{{ url_for('web.admin_delete_device', device_id=device['id']) }}">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="danger-outline" type="submit">删除设备 / Delete</button>

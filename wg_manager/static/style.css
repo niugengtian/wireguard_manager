@@ -70,6 +70,7 @@ progress { width: min(100%, 270px); height: 7px; accent-color: #175cd3; }
 .device-admin-row { display: grid; grid-template-columns: minmax(190px, .65fr) minmax(350px, 1.5fr) auto; align-items: end; gap: 1rem 1.4rem; padding: 1.1rem; }
 .device-identity strong { font-size: 1.02rem; }
 .allowed-ips-form { display: grid; grid-template-columns: minmax(250px, 1fr) auto; align-items: end; gap: .65rem; min-width: 0; }
+.allowed-ips-form .full-tunnel-confirm { grid-column: 1 / -1; color: #8a5900; }
 .allowed-ips-form button { white-space: nowrap; }
 .device-delete { align-self: end; }
 @media (max-width: 900px) {

@@ -27,13 +27,23 @@ CREATE TABLE IF NOT EXISTS devices (
     client_type TEXT NOT NULL CHECK (client_type IN ('windows','macos','linux','ios','android')),
     static_ip TEXT NOT NULL UNIQUE,
     public_key TEXT NOT NULL UNIQUE,
-    client_allowed_ips TEXT NOT NULL DEFAULT '0.0.0.0/0',
+    client_allowed_ips TEXT NOT NULL,
     policy_revision INTEGER NOT NULL DEFAULT 1 CHECK (policy_revision > 0),
     delivered_policy_revision INTEGER NOT NULL DEFAULT 1 CHECK (delivered_policy_revision > 0),
     key_generation INTEGER NOT NULL DEFAULT 1 CHECK (key_generation > 0),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS pending_device_resets (
+    device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+    new_public_key TEXT NOT NULL UNIQUE,
+    base_public_key TEXT NOT NULL,
+    base_key_generation INTEGER NOT NULL CHECK (base_key_generation > 0),
+    policy_revision INTEGER NOT NULL CHECK (policy_revision > 0),
+    prepared_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS installers (
@@ -74,6 +84,7 @@ CREATE TABLE IF NOT EXISTS login_throttle (
 );
 
 CREATE INDEX IF NOT EXISTS devices_user_idx ON devices(user_id);
+CREATE INDEX IF NOT EXISTS pending_device_resets_created_idx ON pending_device_resets(created_at);
 CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events(id DESC);
 CREATE INDEX IF NOT EXISTS installers_platform_idx ON installers(platform, architecture);
 """
@@ -87,7 +98,7 @@ def connect(path: str | Path) -> sqlite3.Connection:
     return connection
 
 
-def initialize(path: str | Path, *, default_client_allowed_ips: str = "0.0.0.0/0") -> None:
+def initialize(path: str | Path, *, default_client_allowed_ips: str = "10.44.0.0/24") -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     connection = connect(path)

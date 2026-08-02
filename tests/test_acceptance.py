@@ -52,7 +52,7 @@ def test_full_business_acceptance_and_no_secret_persistence(app, client, caplog)
     assert first.status_code == 200
     assert first.headers["Cache-Control"].startswith("no-store")
     first_config = first.get_data(as_text=True)
-    assert "AllowedIPs = 0.0.0.0/0" in first_config
+    assert "AllowedIPs = 10.44.0.0/24" in first_config
     assert "::/0" not in first_config
     assert "\nDNS = " not in first_config
     first_ip = _address(first_config)
@@ -92,6 +92,21 @@ def test_full_business_acceptance_and_no_secret_persistence(app, client, caplog)
     reset_public = _device_public_key(reset_config)
     assert reset_public != first_public
     assert _address(reset_config) == first_ip
+    state = json.loads(open(app.config["EXPECTED_PEERS_FILE"], encoding="utf-8").read())
+    peer_keys = {peer["public_key"] for peer in state["peers"]}
+    assert first_public in peer_keys
+    assert reset_public not in peer_keys
+    with app.app_context():
+        pending = get_db().execute(
+            "SELECT * FROM pending_device_resets WHERE device_id = ?", (first_id,)
+        ).fetchone()
+        assert pending["new_public_key"] == reset_public
+        assert "private" not in " ".join(pending.keys()).lower()
+
+    activated = client.post(
+        f"/devices/{first_id}/reset/activate", data={"_csrf": csrf(client)}
+    )
+    assert activated.status_code == 302
     state = json.loads(open(app.config["EXPECTED_PEERS_FILE"], encoding="utf-8").read())
     peer_keys = {peer["public_key"] for peer in state["peers"]}
     assert first_public not in peer_keys
@@ -231,7 +246,55 @@ def test_admin_edits_per_device_client_routes_and_reset_delivers_policy(app, cli
     assert "AllowedIPs = 10.0.0.0/8, 172.31.0.0/16" in reset.get_data(as_text=True)
     with app.app_context():
         row = get_db().execute("SELECT * FROM devices WHERE id = ?", (device["id"],)).fetchone()
+        assert row["policy_revision"] == 2
+        assert row["delivered_policy_revision"] == 1
+    activated = client.post(
+        f"/devices/{device['id']}/reset/activate", data={"_csrf": csrf(client)}
+    )
+    assert activated.status_code == 302
+    with app.app_context():
+        row = get_db().execute("SELECT * FROM devices WHERE id = ?", (device["id"],)).fetchone()
         assert row["policy_revision"] == row["delivered_policy_revision"] == 2
+
+
+def test_full_tunnel_requires_explicit_admin_confirmation(app, client):
+    password = secrets.token_urlsafe(18)
+    with app.app_context():
+        user = create_user(
+            get_db(), username="full-tunnel-user", password=password, quota=1, actor_kind="system"
+        )
+        device, _configuration = create_device(
+            get_db(),
+            app.config,
+            user_id=user["id"],
+            name="guarded",
+            client_type="windows",
+            actor_user_id=user["id"],
+            actor_kind="web",
+        )
+
+    login(client, "runtime-admin", app.runtime_admin_password)
+    denied = client.post(
+        f"/admin/devices/{device['id']}/allowed-ips",
+        data={"_csrf": csrf(client), "client_allowed_ips": "0.0.0.0/0"},
+    )
+    assert denied.status_code == 302
+    with app.app_context():
+        row = get_db().execute("SELECT * FROM devices WHERE id = ?", (device["id"],)).fetchone()
+        assert row["client_allowed_ips"] == "10.44.0.0/24"
+
+    accepted = client.post(
+        f"/admin/devices/{device['id']}/allowed-ips",
+        data={
+            "_csrf": csrf(client),
+            "client_allowed_ips": "0.0.0.0/0",
+            "confirm_full_tunnel": "1",
+        },
+    )
+    assert accepted.status_code == 302
+    with app.app_context():
+        row = get_db().execute("SELECT * FROM devices WHERE id = ?", (device["id"],)).fetchone()
+        assert row["client_allowed_ips"] == "0.0.0.0/0"
 
 
 def test_web_device_lifecycle_waits_for_live_reconciler(monkeypatch, tmp_path):
@@ -277,6 +340,10 @@ def test_web_device_lifecycle_waits_for_live_reconciler(monkeypatch, tmp_path):
         data={"_csrf": csrf(browser), "delivery": "download"},
     )
     assert reset.status_code == 200
+    activated = browser.post(
+        f"/devices/{device_id}/reset/activate", data={"_csrf": csrf(browser)}
+    )
+    assert activated.status_code == 302
     deleted = browser.post(f"/devices/{device_id}/delete", data={"_csrf": csrf(browser)})
     assert deleted.status_code == 302
     assert len(live_revisions) == 3

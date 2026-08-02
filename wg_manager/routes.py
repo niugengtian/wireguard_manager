@@ -37,11 +37,12 @@ from .services import (
     CLIENT_TYPES,
     DomainError,
     audit,
+    activate_prepared_device_reset,
     bi,
     create_device,
     create_user,
     delete_device,
-    reset_device,
+    prepare_device_reset,
     set_user_password,
     store_installer,
     update_device_allowed_ips,
@@ -236,7 +237,15 @@ def logout():
 def devices():
     connection = get_db()
     rows = connection.execute(
-        "SELECT * FROM devices WHERE user_id = ? ORDER BY created_at, id", (g.user["id"],)
+        """SELECT devices.*,
+                  CASE WHEN pending_device_resets.device_id IS NULL THEN 0 ELSE 1 END
+                    AS reset_pending
+           FROM devices
+           LEFT JOIN pending_device_resets
+             ON pending_device_resets.device_id = devices.id
+           WHERE devices.user_id = ?
+           ORDER BY devices.created_at, devices.id""",
+        (g.user["id"],),
     ).fetchall()
     installers = connection.execute(
         "SELECT * FROM installers ORDER BY platform, architecture, version"
@@ -275,13 +284,12 @@ def create_device_route():
 @csrf_required
 def reset_device_route(device_id: str):
     try:
-        device, configuration = reset_device(
+        device, configuration = prepare_device_reset(
             get_db(),
             current_app.config,
             device_id=device_id,
             owner_user_id=g.user["id"],
             actor_user_id=g.user["id"],
-            actor_kind="web",
         )
     except DomainError as error:
         audit(
@@ -295,7 +303,37 @@ def reset_device_route(device_id: str):
             details={"reason": "not_owned_or_missing"},
         )
         abort(error.status, error.message)
-    return _deliver_configuration(device, configuration, request.form.get("delivery", "download"))
+    return _deliver_configuration(
+        device,
+        configuration,
+        request.form.get("delivery", "download"),
+        reset_prepared=True,
+    )
+
+
+@web.post("/devices/<device_id>/reset/activate")
+@login_required
+@csrf_required
+def activate_reset_device_route(device_id: str):
+    try:
+        activate_prepared_device_reset(
+            get_db(),
+            current_app.config,
+            device_id=device_id,
+            owner_user_id=g.user["id"],
+            actor_user_id=g.user["id"],
+        )
+    except DomainError as error:
+        flash(error.message, "error")
+        return redirect(url_for("web.devices"))
+    flash(
+        bi(
+            "新密钥已激活，旧配置已撤销；请立即导入已下载的新配置",
+            "New key activated and old configuration revoked; import the downloaded replacement now.",
+        ),
+        "success",
+    )
+    return redirect(url_for("web.devices"))
 
 
 @web.post("/devices/<device_id>/delete")
@@ -495,6 +533,7 @@ def admin_update_device_allowed_ips(device_id: str):
             client_allowed_ips=request.form.get("client_allowed_ips", ""),
             actor_user_id=g.user["id"],
             actor_kind="web",
+            full_tunnel_confirmed=request.form.get("confirm_full_tunnel") == "1",
         )
         if updated["policy_revision"] != updated["delivered_policy_revision"]:
             flash(
@@ -541,14 +580,21 @@ def admin_upload_installer():
     return redirect(url_for("web.admin_dashboard"))
 
 
-def _deliver_configuration(device: dict, configuration: str, delivery: str):
+def _deliver_configuration(
+    device: dict, configuration: str, delivery: str, *, reset_prepared: bool = False
+):
     if delivery == "qr":
         image = qrcode.make(configuration)
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
         response = make_response(
-            render_template("qr.html", device=device, qr_data=f"data:image/png;base64,{encoded}")
+            render_template(
+                "qr.html",
+                device=device,
+                qr_data=f"data:image/png;base64,{encoded}",
+                reset_prepared=reset_prepared,
+            )
         )
         return _no_store(response)
     if delivery != "download":
@@ -557,6 +603,8 @@ def _deliver_configuration(device: dict, configuration: str, delivery: str):
     response = make_response(configuration)
     response.headers["Content-Type"] = "text/plain; charset=utf-8"
     response.headers["Content-Disposition"] = f'attachment; filename="{safe_name or "wireguard"}.conf"'
+    if reset_prepared:
+        response.headers["X-WireGuard-Reset-State"] = "prepared-not-active"
     return _no_store(response)
 
 

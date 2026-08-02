@@ -31,5 +31,6 @@
     {% block content %}{% endblock %}
   </main>
   <footer>{% if config['WG_ADAPTER'] == 'reconciler' %}实时热更新已启用 · <code>wg syncconf</code> · 不重启接口 / Live hot apply · no interface restart{% else %}离线适配器 · 不修改在线接口 / Offline adapter · live interface unchanged{% endif %}</footer>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

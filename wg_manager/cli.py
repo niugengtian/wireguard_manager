@@ -72,7 +72,13 @@ def build_parser() -> argparse.ArgumentParser:
         help=bi("该设备客户端路由范围；默认使用 WG_ALLOWED_IPS", "Client routes for this device; defaults to WG_ALLOWED_IPS"),
     )
     device_create.add_argument("--output", type=Path, required=True, help=bi("必须不存在的配置输出路径", "New configuration output path"))
-    device_reset = device_commands.add_parser("reset", help=bi("轮换密钥并保留 IP", "Rotate keys and preserve IP"))
+    device_reset = device_commands.add_parser(
+        "reset",
+        help=bi(
+            "立即轮换密钥并保留 IP（服务器本机/带恢复通道管理）",
+            "Immediately rotate keys and preserve IP (local/out-of-band administration)",
+        ),
+    )
     device_reset.add_argument("device_id")
     device_reset.add_argument("--output", type=Path, required=True, help=bi("必须不存在的配置输出路径", "New configuration output path"))
     device_delete = device_commands.add_parser("delete", help=bi("删除设备并释放 IP", "Delete a device and release IP"))
@@ -83,6 +89,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     device_allowed_ips.add_argument("device_id")
     device_allowed_ips.add_argument("--set", required=True, dest="allowed_ips", help=bi("逗号分隔 IPv4 CIDR", "Comma-separated IPv4 CIDRs"))
+    device_allowed_ips.add_argument(
+        "--confirm-full-tunnel",
+        action="store_true",
+        help=bi(
+            "显式确认 0.0.0.0/0 可能中断当前远程连接",
+            "Confirm that 0.0.0.0/0 may interrupt current remote access",
+        ),
+    )
 
     installer = groups.add_parser("installer", help=bi("管理客户端安装包", "Manage downloadable client packages"))
     installer_commands = installer.add_subparsers(dest="command", required=True)
@@ -245,6 +259,7 @@ def _dispatch(args, config) -> None:
                 client_allowed_ips=args.allowed_ips,
                 actor_user_id=None,
                 actor_kind="cli",
+                full_tunnel_confirmed=args.confirm_full_tunnel,
             )
             reset_required = device["policy_revision"] != device["delivered_policy_revision"]
             suffix = (

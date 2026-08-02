@@ -344,6 +344,9 @@ def reset_device(
                    updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
                 (public_key, device_id),
             )
+            connection.execute(
+                "DELETE FROM pending_device_resets WHERE device_id = ?", (device_id,)
+            )
             state_hash = _reconcile(connection, config)
             live_applied = True
             audit(
@@ -368,6 +371,150 @@ def reset_device(
         device["static_ip"],
         private_key,
         client_allowed_ips=device["client_allowed_ips"],
+    )
+
+
+def prepare_device_reset(
+    connection,
+    config,
+    *,
+    device_id: str,
+    owner_user_id: int,
+    actor_user_id: int,
+) -> tuple[dict, str]:
+    """Prepare a one-time Web reset without revoking the transport peer yet.
+
+    Only the new public key is persisted. The private key remains in this
+    request and is delivered once in the returned configuration.
+    """
+    private_key, public_key = generate_keypair()
+    with transaction(connection, immediate=True):
+        device = connection.execute(
+            "SELECT * FROM devices WHERE id = ? AND user_id = ?",
+            (device_id, owner_user_id),
+        ).fetchone()
+        if device is None:
+            raise DomainError(
+                bi("设备不存在或无权访问", "device not found or not authorized"), 404
+            )
+        configuration = build_client_config(
+            config,
+            device["static_ip"],
+            private_key,
+            client_allowed_ips=device["client_allowed_ips"],
+        )
+        replaced = connection.execute(
+            "SELECT 1 FROM pending_device_resets WHERE device_id = ?", (device_id,)
+        ).fetchone() is not None
+        connection.execute(
+            """INSERT INTO pending_device_resets(
+                   device_id, new_public_key, base_public_key, base_key_generation,
+                   policy_revision, prepared_by_user_id, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(device_id) DO UPDATE SET
+                   new_public_key = excluded.new_public_key,
+                   base_public_key = excluded.base_public_key,
+                   base_key_generation = excluded.base_key_generation,
+                   policy_revision = excluded.policy_revision,
+                   prepared_by_user_id = excluded.prepared_by_user_id,
+                   created_at = CURRENT_TIMESTAMP""",
+            (
+                device_id,
+                public_key,
+                device["public_key"],
+                device["key_generation"],
+                device["policy_revision"],
+                actor_user_id,
+            ),
+        )
+        audit(
+            connection,
+            action="device.reset.prepare",
+            object_type="device",
+            object_id=device_id,
+            actor_user_id=actor_user_id,
+            actor_kind="web",
+            details={"ip_preserved": True, "replaced_pending": replaced},
+        )
+    prepared = dict(device)
+    prepared["pending_reset"] = 1
+    return prepared, configuration
+
+
+def activate_prepared_device_reset(
+    connection,
+    config,
+    *,
+    device_id: str,
+    owner_user_id: int,
+    actor_user_id: int,
+) -> dict:
+    """Activate a previously delivered Web reset and revoke the old key."""
+    live_applied = False
+    try:
+        with transaction(connection, immediate=True):
+            row = connection.execute(
+                """SELECT devices.*,
+                          pending_device_resets.new_public_key AS pending_public_key,
+                          pending_device_resets.base_public_key AS pending_base_public_key,
+                          pending_device_resets.base_key_generation AS pending_base_generation,
+                          pending_device_resets.policy_revision AS pending_policy_revision
+                   FROM devices
+                   LEFT JOIN pending_device_resets
+                     ON pending_device_resets.device_id = devices.id
+                   WHERE devices.id = ? AND devices.user_id = ?""",
+                (device_id, owner_user_id),
+            ).fetchone()
+            if row is None:
+                raise DomainError(
+                    bi("设备不存在或无权访问", "device not found or not authorized"), 404
+                )
+            if row["pending_public_key"] is None:
+                raise DomainError(
+                    bi("没有待激活的重置配置", "no prepared reset is awaiting activation"), 409
+                )
+            if (
+                row["public_key"] != row["pending_base_public_key"]
+                or row["key_generation"] != row["pending_base_generation"]
+                or row["policy_revision"] != row["pending_policy_revision"]
+            ):
+                raise DomainError(
+                    bi(
+                        "设备或路由策略已改变，请重新下载替换配置",
+                        "device or route policy changed; prepare and download another replacement",
+                    ),
+                    409,
+                )
+            connection.execute(
+                """UPDATE devices SET public_key = ?, key_generation = key_generation + 1,
+                   delivered_policy_revision = policy_revision,
+                   updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
+                (row["pending_public_key"], device_id),
+            )
+            connection.execute(
+                "DELETE FROM pending_device_resets WHERE device_id = ?", (device_id,)
+            )
+            state_hash = _reconcile(connection, config)
+            live_applied = True
+            audit(
+                connection,
+                action="device.reset",
+                object_type="device",
+                object_id=device_id,
+                actor_user_id=actor_user_id,
+                actor_kind="web",
+                details={
+                    "ip_preserved": True,
+                    "delivery_confirmed_before_revocation": True,
+                    "state_sha256": state_hash,
+                },
+            )
+    except Exception:
+        if live_applied:
+            _compensate_live_state(connection, config)
+        raise
+    return dict(
+        connection.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
     )
 
 
@@ -464,11 +611,20 @@ def update_device_allowed_ips(
     client_allowed_ips: str,
     actor_user_id: int | None,
     actor_kind: str,
+    full_tunnel_confirmed: bool = False,
 ):
     try:
         normalized = normalize_client_allowed_ips(client_allowed_ips)
     except ValueError as error:
         raise DomainError(bi("客户端 AllowedIPs 无效", str(error))) from error
+    if normalized == "0.0.0.0/0" and not full_tunnel_confirmed:
+        raise DomainError(
+            bi(
+                "全隧道可能中断本地网络和远程管理；必须显式确认",
+                "full tunnel may cut off local and remote-management traffic; explicit confirmation is required",
+            ),
+            409,
+        )
     with transaction(connection, immediate=True):
         device = connection.execute(
             "SELECT * FROM devices WHERE id = ?", (device_id,)
@@ -477,6 +633,9 @@ def update_device_allowed_ips(
             raise DomainError(bi("设备不存在", "device not found"), 404)
         if device["client_allowed_ips"] == normalized:
             return device
+        pending_invalidated = connection.execute(
+            "DELETE FROM pending_device_resets WHERE device_id = ?", (device_id,)
+        ).rowcount > 0
         connection.execute(
             """UPDATE devices SET client_allowed_ips = ?, policy_revision = policy_revision + 1,
                updated_at = CURRENT_TIMESTAMP WHERE id = ?""",
@@ -489,7 +648,11 @@ def update_device_allowed_ips(
             object_id=device_id,
             actor_user_id=actor_user_id,
             actor_kind=actor_kind,
-            details={"client_allowed_ips": normalized, "requires_reset": True},
+            details={
+                "client_allowed_ips": normalized,
+                "requires_reset": True,
+                "pending_reset_invalidated": pending_invalidated,
+            },
         )
     return connection.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
 

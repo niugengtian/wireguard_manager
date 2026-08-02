@@ -231,12 +231,12 @@ Address = 10.44.0.2/24
 [Peer]
 PublicKey = SERVER_PUBLIC_KEY_BASE64
 Endpoint = VPN_ENDPOINT_HOST:51820
-AllowedIPs = 0.0.0.0/0
+AllowedIPs = 10.44.0.0/24
 PersistentKeepalive = 25
 ```
 
-只访问内部网段时，把 `AllowedIPs` 改成明确的内部 CIDR，而不是默认路由。
-For split tunnel access, replace the default route with explicit internal CIDRs.
+默认使用明确的内部 CIDR。只有服务端 NAT、转发、DNS 与恢复通道均已验证时，才改为 `0.0.0.0/0` 全隧道。
+Use explicit internal CIDRs by default. Change to `0.0.0.0/0` only after full-tunnel NAT, forwarding, DNS, and recovery access are verified.
 
 ## 10. 日常操作 / Routine operations
 
@@ -327,7 +327,7 @@ SQLite transaction
 服务端与客户端的 `AllowedIPs` 含义不同：
 
 1. 服务端每个 Peer 的 `AllowedIPs` 是该设备的唯一隧道地址，例如 `10.44.0.27/32`。多个 PublicKey 对应多个独立 `[Peer]`，不能共享相同 `/32`。
-2. 客户端配置的 `AllowedIPs` 是该设备送入隧道的目标路由，可以按设备不同；多条 CIDR 使用英文逗号分隔，例如 `10.255.77.0/24, 172.31.0.0/16`。`0.0.0.0/0` 表示所有 IPv4 流量走隧道。修改后必须 reset 才能一次性交付新配置。
+2. 客户端配置的 `AllowedIPs` 是该设备送入隧道的目标路由，可以按设备不同；多条 CIDR 使用英文逗号分隔，例如 `10.255.77.0/24, 172.31.0.0/16`。`0.0.0.0/0` 表示所有 IPv4 流量走隧道，只能在 NAT、转发、DNS 和恢复通道均已验证时使用。修改后，Web 用户先下载替换配置，再显式激活新密钥；这避免 reset 请求在下载完成前撤销自己依赖的旧 Peer。
 3. 服务端 Peer `AllowedIPs` 不是目标访问控制。若要限制某设备访问特定 VPC/内部网段，应通过 nftables/防火墙按来源隧道 IP 实施。
 
 自动化测试已覆盖 300 个托管 Peer、未托管 Peer 保留、reset/delete 公钥撤销、失败回滚以及无 `restart` 命令。`NOT VERIFIED`：在你的真实服务器上安装并执行在线验收；本文没有操作 AWS 或服务器资源。

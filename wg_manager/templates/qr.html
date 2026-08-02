@@ -5,7 +5,15 @@
   <h1>请立即扫描 / Scan now</h1>
   <p>此二维码包含 <strong>{{ device['name'] }}</strong> 的私钥，不会保存或再次显示。<br><span class="muted">This QR contains the device private key. It will not be stored or shown again.</span></p>
   <img class="qr" src="{{ qr_data }}" alt="一次性 WireGuard 配置二维码 / One-time configuration QR code">
+  {% if reset_prepared %}
+  <p class="notice">旧 Peer 仍然有效。确认新配置已扫描或保存后，再激活新密钥；当前旧隧道将立即断开。<br><span class="muted">The old peer is still active. Activate only after the replacement is safely imported or saved; the current old tunnel will drop immediately.</span></p>
+  <form method="post" action="{{ url_for('web.activate_reset_device_route', device_id=device['id']) }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit">2. 激活新配置 / Activate replacement</button>
+  </form>
+  {% else %}
   <p>导入官方客户端后请离开此页；丢失后只能 reset。<br><span class="muted">After importing it, leave this page. If lost, reset the device.</span></p>
   <a class="button" href="{{ url_for('web.devices') }}">完成 / Done</a>
+  {% endif %}
 </section>
 {% endblock %}

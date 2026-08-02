@@ -30,7 +30,7 @@ include-package-data = true
 include = ["wg_manager*"]
 
 [tool.setuptools.package-data]
-wg_manager = ["templates/*.html", "static/*.css"]
+wg_manager = ["templates/*.html", "static/*.css", "static/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

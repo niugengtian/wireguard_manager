@@ -24,9 +24,18 @@ def normalize_client_allowed_ips(value: str) -> str:
             raise ValueError("only IPv4 client routes are supported")
         networks.add(network)
 
-    # Remove redundant subnets while preserving explicit least-route semantics.
-    collapsed = list(ipaddress.collapse_addresses(networks))
-    return ", ".join(str(network) for network in collapsed)
+    # Remove routes already covered by an explicitly larger route, but do not
+    # merge adjacent routes. In particular, two /1 routes must not silently
+    # become /0 because Windows treats an exact full-tunnel route specially.
+    normalized = sorted(
+        (
+            network
+            for network in networks
+            if not any(network != other and network.subnet_of(other) for other in networks)
+        ),
+        key=lambda network: (int(network.network_address), network.prefixlen),
+    )
+    return ", ".join(str(network) for network in normalized)
 
 
 def split_allowed_ips(value: str) -> tuple[str, ...]:
