@@ -48,6 +48,8 @@ wg-manager reconcile</code></pre>
 
 <section class="card">
   <h2>部署与排错 / Deployment and troubleshooting</h2>
+  <p>容器部署不需要 Docker Compose：WireGuard Server 使用固定版本现成镜像，Manager Web/CLI 与 reconciler 共用一个镜像，通过两个环境文件和三条 <code>docker run</code> 命令启动。</p>
+  <p><a href="https://github.com/niugengtian/wireguard_manager/blob/main/docs/DOCKER_DEPLOYMENT.md" rel="noreferrer">无 Compose 容器部署 / Docker run deployment</a></p>
   <p>Amazon Linux 2023、Ubuntu、CentOS Stream 和 Rocky Linux 的 WireGuard、Manager、reconciler 完整部署、日常操作、升级回滚与常见问题见：</p>
   <p><a href="https://github.com/niugengtian/wireguard_manager/blob/main/docs/OPERATIONS_RUNBOOK.md" rel="noreferrer">端到端运维手册 / End-to-end operations runbook</a></p>
   <p><a href="https://github.com/niugengtian/wireguard_manager/blob/main/docs/WIREGUARD_SERVER_GUIDE.md" rel="noreferrer">WireGuard Server 组件指南 / Server component guide</a></p>

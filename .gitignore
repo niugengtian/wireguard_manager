@@ -6,3 +6,4 @@ instance/
 build/
 dist/
 *.egg-info/
+data/

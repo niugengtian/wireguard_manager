@@ -1,6 +1,6 @@
 # WireGuard Manager｜WireGuard 用户与设备配置管理
 
-[中文](#中文说明) · [English](#english) · [端到端运维手册 / Operations runbook](docs/OPERATIONS_RUNBOOK.md) · [Manager 安装指南 / Manager install](docs/WG_MANAGER_INSTALL.md) · [服务端部署指南 / Server guide](docs/WIREGUARD_SERVER_GUIDE.md) · [验收记录 / Acceptance](ACCEPTANCE.md)
+[中文](#中文说明) · [English](#english) · [无 Compose 容器部署 / Docker run](docs/DOCKER_DEPLOYMENT.md) · [端到端运维手册 / Operations runbook](docs/OPERATIONS_RUNBOOK.md) · [Manager 安装指南 / Manager install](docs/WG_MANAGER_INSTALL.md) · [服务端部署指南 / Server guide](docs/WIREGUARD_SERVER_GUIDE.md) · [验收记录 / Acceptance](ACCEPTANCE.md)
 
 ## 中文说明
 
@@ -41,6 +41,14 @@ Web 与 CLI 的设备新增、reset、delete，以及用户禁用/启用，都�
 SQLite 与期望 Peer 文件只保存公钥。配置丢失后无法找回，只能执行 `reset`。
 
 ### 安装与启动
+
+#### 容器方式（不使用 Compose）
+
+WireGuard Server 直接使用固定版本的 LinuxServer 现成镜像；Web/CLI 和 reconciler 共用一个 `wireguard-manager:0.3.0` 镜像、分别以两个角色运行。部署只引用 `docker/wireguard-server.env.example`、`docker/manager.env.example` 两个配置文件，再执行三条 `docker run` 命令。详见 [无 Compose 的容器部署指南](docs/DOCKER_DEPLOYMENT.md)。
+
+三个容器共享同一个 WireGuard 网络命名空间，因此只有一个 `wg0` 和一个 UDP 监听端口；Manager 页面仅监听隧道地址，不必向宿主机公网发布 `8081`。现有原生 WireGuard Server 的自动迁移尚未验证，不应直接与容器版本同时运行。
+
+#### 原生 Python/systemd 方式
 
 从空服务器开始时，按 [WireGuard + wg-manager 端到端运维手册](docs/OPERATIONS_RUNBOOK.md) 执行；已经运行 WireGuard 时，可直接使用 [WireGuard Manager 安装与启动指南](docs/WG_MANAGER_INSTALL.md)。手册记录了三个组件的安装顺序、源码包校验、非 root 运行、systemd、日常操作、升级回滚和本次真实排错经验。
 
@@ -165,6 +173,10 @@ Client `AllowedIPs` accepts up to 32 comma-separated IPv4 CIDRs. `0.0.0.0/0` mea
 - The file adapter uses canonical JSON, `fsync`, atomic rename, and one `.previous` rollback file.
 
 ### Install and run
+
+For containers, use the existing pinned LinuxServer WireGuard image and reuse one `wireguard-manager:0.3.0` image for separate Manager and reconciler roles. No Compose file is required; see [Docker run deployment without Compose](docs/DOCKER_DEPLOYMENT.md). The three containers share one network namespace, one `wg0`, and one UDP listening port.
+
+For a native Python/systemd installation:
 
 For a complete server-to-Manager deployment, follow the [end-to-end operations runbook](docs/OPERATIONS_RUNBOOK.md). For deployment next to an existing WireGuard server, follow the [WireGuard Manager installation guide](docs/WG_MANAGER_INSTALL.md). They cover source verification, non-root operation, systemd, upgrades, rollback, tunnel-address access, and the installation failures observed during testing.
 

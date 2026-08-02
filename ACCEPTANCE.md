@@ -20,10 +20,14 @@ Status vocabulary is limited to `READY`, `BLOCKED`, `NOT VERIFIED`, and `VERIFIE
 | 在线应用失败回滚 / Live apply failure rollback | VERIFIED | 候选拒绝、在线校验失败、状态持久化失败三条回滚测试 / apply, verification, and metadata failure rollback tests |
 | 每设备多条客户端 AllowedIPs / Per-device multiple client AllowedIPs | VERIFIED | Web/CLI 保存、CIDR 规范化、reset 交付与 RBAC 集成测试 / save, normalization, reset delivery, and RBAC tests |
 | Python 依赖漏洞审计 / Python dependency vulnerability audit | VERIFIED | `pip-audit`：无已知漏洞；`cryptography` 固定为 48.0.1 或更高 / no known vulnerabilities |
+| 单一 Manager 镜像双角色 / One Manager image for two roles | VERIFIED | `linux/amd64` 镜像构建成功；版本命令、非 root UID/GID、零 capability、root 拒绝和 `pip check` 已执行 / image build and runtime checks |
+| 无 Compose 容器 Web 冒烟 / Compose-free container Web smoke | VERIFIED | 临时只读、零 capability 容器内 `/login` 返回 HTTP 200，测试容器已自动删除 / isolated container HTTP smoke passed |
+| amd64 镜像与离线部署包 / amd64 image and offline bundle | VERIFIED | 两个归档均通过本地 SHA-256 复核；部署包只含镜像、示例环境文件和双语文档 / archives verified locally |
 | 当前一键 reset 的真实浏览器流程 / Current one-click reset in a real browser | NOT VERIFIED | 旧版流程曾运行真实浏览器；本次修复后只跑定向回归，未操作用户真实服务器 / previous flow had browser evidence; current fix has targeted regression only |
 | 中英双语 README、页面与 CLI help / Bilingual README, pages, and CLI help | VERIFIED | 浏览器检查 `/login`、`/help`、`/admin` 与多 Peer/AllowedIPs 说明；CLI help 自动化断言 / browser and CLI assertions |
 | 真实 `wg` / `syncconf` / Live `wg` / `syncconf` | NOT VERIFIED | 实现与假 `wg` 自动化已验证，尚未接入用户真实接口 / implementation and fake-wg tests verified; user interface not touched |
-| 最新 reconciler 边界加固 / Latest reconciler boundary hardening | NOT VERIFIED | 已实现 root 独占状态目录、Socket 对端 UID、请求标识与事务补偿；按用户指示未继续运行测试 / implemented but further testing was skipped per user instruction |
+| 最新 reconciler 边界加固 / Latest reconciler boundary hardening | VERIFIED | root 独占状态目录、Socket 对端 UID、请求标识与事务补偿通过当前 21 项自动化测试 / current automated suite passed |
+| 三容器真实 WireGuard 接口 / Live three-container WireGuard interface | NOT VERIFIED | 未在用户服务器建立或替换 `wg0`；现有原生 Server 迁移不自动执行 / no live interface or native-server migration was attempted |
 | AWS 部署与资源 / AWS deployment/resources | NOT VERIFIED | 明确不在范围内，未执行任何 AWS 操作 / out of scope; no AWS action performed |
 
 浏览器验收使用隔离临时数据目录、文件适配器与仅监听回环地址的 Waitress 进程。验收后已停止进程并删除临时数据库、会话密钥和期望状态文件；测试数据不可恢复，且不含用户生产数据。

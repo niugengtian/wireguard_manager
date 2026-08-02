@@ -1,5 +1,7 @@
 # WireGuard + wg-manager 端到端部署与运维手册 / End-to-End Operations Runbook
 
+> 需要容器化但不使用 Docker Compose 时，直接使用 [无 Compose 的容器部署指南](DOCKER_DEPLOYMENT.md)：现成 WireGuard Server 镜像，加一个同时承担 Manager/reconciler 两种角色的自建镜像。
+
 > 中文为主，英文摘要随后。本手册覆盖 WireGuard Server、`wireguard-manager` Web/CLI 和 `wireguard-manager-reconciler` 三个组件。
 > Chinese is authoritative; concise English notes follow. This runbook covers the WireGuard server, Manager Web/CLI, and the least-privilege reconciler.
 
