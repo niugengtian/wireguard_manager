@@ -292,6 +292,8 @@ If reload fails and the interface is unusable, use `restart` during a maintenanc
 
 ## 12. 与 WireGuard Manager 的边界 / Manager integration boundary
 
+在已经运行本指南服务端的主机上安装 Web/CLI，请使用 [WireGuard Manager 安装与启动指南](WG_MANAGER_INSTALL.md)。该指南不会重装 WireGuard 或覆盖 `wg0.conf`。
+
 当前 Manager 默认只写：
 
 ```text

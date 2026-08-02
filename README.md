@@ -1,6 +1,6 @@
 # WireGuard Manager｜WireGuard 用户与设备配置管理
 
-[中文](#中文说明) · [English](#english) · [服务端部署指南 / Server guide](docs/WIREGUARD_SERVER_GUIDE.md) · [验收记录 / Acceptance](ACCEPTANCE.md)
+[中文](#中文说明) · [English](#english) · [Manager 安装指南 / Manager install](docs/WG_MANAGER_INSTALL.md) · [服务端部署指南 / Server guide](docs/WIREGUARD_SERVER_GUIDE.md) · [验收记录 / Acceptance](ACCEPTANCE.md)
 
 ## 中文说明
 
@@ -38,6 +38,8 @@
 SQLite 与期望 Peer 文件只保存公钥。配置丢失后无法找回，只能执行 `reset`。
 
 ### 安装与启动
+
+在已经运行 WireGuard 的服务器上部署时，请直接使用 [WireGuard Manager 安装与启动指南](docs/WG_MANAGER_INSTALL.md)。其中记录了源码解压、非 root 安装、现有 `wg0` 参数、systemd、通过隧道地址访问和常见错误排查。
 
 需要 Python 3.11 或更高版本，并使用专用的**非 root** 系统用户运行：
 
@@ -146,6 +148,8 @@ The application only emits deterministic desired peer state. It **cannot** execu
 - The file adapter uses canonical JSON, `fsync`, atomic rename, and one `.previous` rollback file.
 
 ### Install and run
+
+For deployment next to an existing WireGuard server, follow the [WireGuard Manager installation guide](docs/WG_MANAGER_INSTALL.md). It covers source extraction, non-root operation, existing `wg0` parameters, systemd, tunnel-address access, and observed installation failures.
 
 ```sh
 python3 -m venv .venv
