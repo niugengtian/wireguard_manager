@@ -8,7 +8,7 @@
   <ol>
     <li>登录后填写设备名称并选择 Windows、macOS、Linux、iOS 或 Android。<br><span class="muted">Sign in, name the device, and select its client platform.</span></li>
     <li>桌面端下载一次性 <code>.conf</code>；移动端可选择一次性二维码。<br><span class="muted">Download the one-time <code>.conf</code> on desktop, or choose a one-time QR code for mobile.</span></li>
-    <li>Web reset 分两步：先一次性下载/扫码，旧 Peer 仍有效；确认新配置已保存后再激活。激活才会撤销旧公钥，并默认保留静态 IP。<br><span class="muted">Web reset has two steps: deliver the replacement while the old peer still works, then activate only after it is safely stored. Activation revokes the old key and preserves the static IP.</span></li>
+    <li>桌面端 Web reset 是一键流程：浏览器先完整接收新 <code>.conf</code>，服务端稍后自动热切换公钥并撤销旧 Peer；静态 IP 默认保留。二维码因需要人工扫描，仍在扫描完成后显式确认。<br><span class="muted">Desktop Web reset downloads the complete replacement first, then automatically hot-swaps the key. QR reset still requires confirmation after scanning.</span></li>
     <li>实时模式下，delete 会先从在线接口移除并验证 Peer，再释放 IP；文件模式只重建期望状态。<br><span class="muted">In live mode, delete removes and verifies the peer before releasing its IP. File mode only rebuilds desired state.</span></li>
   </ol>
 </section>

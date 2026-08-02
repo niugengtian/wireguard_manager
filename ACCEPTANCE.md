@@ -8,7 +8,7 @@ Status vocabulary is limited to `READY`, `BLOCKED`, `NOT VERIFIED`, and `VERIFIE
 | 管理员创建 quota=2 用户 / Admin creates quota-2 user | VERIFIED | 自动化集成测试 / automated integration test |
 | 前两台设备成功、第三台被拒绝 / First and second devices succeed; third denied | VERIFIED | 自动化集成测试 / automated integration test |
 | 配置一次性交付，私钥不进入数据库、数据文件或日志 / One-time config; no private key at rest or in logs | VERIFIED | 自动化集成测试 / automated integration test |
-| Reset 先交付、后撤销旧公钥，并保留 IP / Reset delivers before old-key revocation and preserves IP | VERIFIED | 定向集成测试断言 prepare 阶段旧 Peer 仍在，activate 后才切换 / targeted integration assertions for prepare then activate |
+| Reset 一键先交付、后自动撤销旧公钥，并保留 IP / One-click reset delivers before automatic revocation and preserves IP | VERIFIED | 定向集成测试断言响应 close 前旧 Peer 仍在，close 回调后才切换；重复下载回调不会串扰 / response-close and repeated-download assertions |
 | Delete 移除 Peer 并立即释放地址 / Delete removes peer and releases address | VERIFIED | 集成测试与地址复用断言 / integration test and address-reuse assertion |
 | 并发创建获得不同 IP / Concurrent creates receive different IPs | VERIFIED | 双线程集成测试与数据库唯一约束 / two-thread test and database uniqueness constraint |
 | 对象级授权和上传 RBAC / Object authorization and upload RBAC | VERIFIED | 集成测试返回 404/403 / integration test returns 404/403 |
@@ -20,7 +20,7 @@ Status vocabulary is limited to `READY`, `BLOCKED`, `NOT VERIFIED`, and `VERIFIE
 | 在线应用失败回滚 / Live apply failure rollback | VERIFIED | 候选拒绝、在线校验失败、状态持久化失败三条回滚测试 / apply, verification, and metadata failure rollback tests |
 | 每设备多条客户端 AllowedIPs / Per-device multiple client AllowedIPs | VERIFIED | Web/CLI 保存、CIDR 规范化、reset 交付与 RBAC 集成测试 / save, normalization, reset delivery, and RBAC tests |
 | Python 依赖漏洞审计 / Python dependency vulnerability audit | VERIFIED | `pip-audit`：无已知漏洞；`cryptography` 固定为 48.0.1 或更高 / no known vulnerabilities |
-| 当前两阶段 reset 的真实浏览器流程 / Current two-step reset in a real browser | NOT VERIFIED | 旧版流程曾运行真实浏览器；本次修复后遵循用户“不继续测试”边界，只跑定向回归 / previous flow had browser evidence; current fix has targeted regression only |
+| 当前一键 reset 的真实浏览器流程 / Current one-click reset in a real browser | NOT VERIFIED | 旧版流程曾运行真实浏览器；本次修复后只跑定向回归，未操作用户真实服务器 / previous flow had browser evidence; current fix has targeted regression only |
 | 中英双语 README、页面与 CLI help / Bilingual README, pages, and CLI help | VERIFIED | 浏览器检查 `/login`、`/help`、`/admin` 与多 Peer/AllowedIPs 说明；CLI help 自动化断言 / browser and CLI assertions |
 | 真实 `wg` / `syncconf` / Live `wg` / `syncconf` | NOT VERIFIED | 实现与假 `wg` 自动化已验证，尚未接入用户真实接口 / implementation and fake-wg tests verified; user interface not touched |
 | 最新 reconciler 边界加固 / Latest reconciler boundary hardening | NOT VERIFIED | 已实现 root 独占状态目录、Socket 对端 UID、请求标识与事务补偿；按用户指示未继续运行测试 / implemented but further testing was skipped per user instruction |

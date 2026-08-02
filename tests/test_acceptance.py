@@ -103,10 +103,7 @@ def test_full_business_acceptance_and_no_secret_persistence(app, client, caplog)
         assert pending["new_public_key"] == reset_public
         assert "private" not in " ".join(pending.keys()).lower()
 
-    activated = client.post(
-        f"/devices/{first_id}/reset/activate", data={"_csrf": csrf(client)}
-    )
-    assert activated.status_code == 302
+    reset.close()
     state = json.loads(open(app.config["EXPECTED_PEERS_FILE"], encoding="utf-8").read())
     peer_keys = {peer["public_key"] for peer in state["peers"]}
     assert first_public not in peer_keys
@@ -248,10 +245,7 @@ def test_admin_edits_per_device_client_routes_and_reset_delivers_policy(app, cli
         row = get_db().execute("SELECT * FROM devices WHERE id = ?", (device["id"],)).fetchone()
         assert row["policy_revision"] == 2
         assert row["delivered_policy_revision"] == 1
-    activated = client.post(
-        f"/devices/{device['id']}/reset/activate", data={"_csrf": csrf(client)}
-    )
-    assert activated.status_code == 302
+    reset.close()
     with app.app_context():
         row = get_db().execute("SELECT * FROM devices WHERE id = ?", (device["id"],)).fetchone()
         assert row["policy_revision"] == row["delivered_policy_revision"] == 2
@@ -297,6 +291,52 @@ def test_full_tunnel_requires_explicit_admin_confirmation(app, client):
         assert row["client_allowed_ips"] == "0.0.0.0/0"
 
 
+def test_older_download_callback_cannot_activate_a_newer_reset(app, client):
+    password = secrets.token_urlsafe(18)
+    with app.app_context():
+        user = create_user(
+            get_db(), username="repeat-reset", password=password, quota=1, actor_kind="system"
+        )
+        device, _configuration = create_device(
+            get_db(),
+            app.config,
+            user_id=user["id"],
+            name="repeat-laptop",
+            client_type="windows",
+            actor_user_id=user["id"],
+            actor_kind="web",
+        )
+        original_public_key = device["public_key"]
+
+    login(client, "repeat-reset", password)
+    first = client.post(
+        f"/devices/{device['id']}/reset",
+        data={"_csrf": csrf(client), "delivery": "download"},
+    )
+    first_public_key = _device_public_key(first.get_data(as_text=True))
+    second = client.post(
+        f"/devices/{device['id']}/reset",
+        data={"_csrf": csrf(client), "delivery": "download"},
+    )
+    second_public_key = _device_public_key(second.get_data(as_text=True))
+    assert first_public_key != second_public_key
+
+    first.close()
+    with app.app_context():
+        row = get_db().execute("SELECT * FROM devices WHERE id = ?", (device["id"],)).fetchone()
+        pending = get_db().execute(
+            "SELECT * FROM pending_device_resets WHERE device_id = ?", (device["id"],)
+        ).fetchone()
+        assert row["public_key"] == original_public_key
+        assert pending["new_public_key"] == second_public_key
+
+    second.close()
+    with app.app_context():
+        row = get_db().execute("SELECT * FROM devices WHERE id = ?", (device["id"],)).fetchone()
+        assert row["public_key"] == second_public_key
+        assert row["key_generation"] == 2
+
+
 def test_web_device_lifecycle_waits_for_live_reconciler(monkeypatch, tmp_path):
     live_revisions = []
     monkeypatch.setattr(
@@ -340,10 +380,7 @@ def test_web_device_lifecycle_waits_for_live_reconciler(monkeypatch, tmp_path):
         data={"_csrf": csrf(browser), "delivery": "download"},
     )
     assert reset.status_code == 200
-    activated = browser.post(
-        f"/devices/{device_id}/reset/activate", data={"_csrf": csrf(browser)}
-    )
-    assert activated.status_code == 302
+    reset.close()
     deleted = browser.post(f"/devices/{device_id}/delete", data={"_csrf": csrf(browser)})
     assert deleted.status_code == 302
     assert len(live_revisions) == 3

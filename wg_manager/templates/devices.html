@@ -33,7 +33,7 @@
 
 <section class="card">
   <h2>有效设备 / Active devices</h2>
-  <p class="notice"><strong>Web 重置分两步：</strong>先下载替换配置，此时旧连接保持有效；确认文件已保存后再激活新密钥。激活会立即中断当前旧隧道，随后导入新配置。<br><span class="muted"><strong>Two-step Web reset:</strong> download first while the old peer remains valid; activate only after the file is safely stored. Activation drops the old tunnel, then you import the replacement.</span></p>
+  <p class="notice"><strong>一键重置：</strong>浏览器先完整接收替换配置，服务端随后自动热切换公钥。下载后当前旧隧道会在几秒内断开，请直接导入刚下载的新配置。<br><span class="muted"><strong>One-click reset:</strong> the browser receives the complete replacement first; the server then hot-swaps the public key automatically. The old tunnel will drop a few seconds after download.</span></p>
   {% if devices %}
   <div class="table-wrap"><table>
     <thead><tr><th>名称 / Name</th><th>类型 / Type</th><th>隧道 IP / Tunnel IP</th><th>客户端范围 / Client AllowedIPs</th><th>密钥代次 / Generation</th><th>操作 / Actions</th></tr></thead>
@@ -43,25 +43,19 @@
         <td>{{ device['name'] }}</td>
         <td>{{ device['client_type'] }}</td>
         <td><code>{{ device['static_ip'] }}</code></td>
-        <td><code>{{ device['client_allowed_ips'] }}</code>{% if device['reset_pending'] %}<br><span class="badge status-warn">新配置已交付，等待激活 / Awaiting activation</span>{% elif device['policy_revision'] != device['delivered_policy_revision'] %}<br><span class="badge status-warn">策略已更新，请 reset / Reset required</span>{% endif %}</td>
+        <td><code>{{ device['client_allowed_ips'] }}</code>{% if device['reset_pending'] %}<br><span class="badge status-warn">下载后自动切换中 / Auto activation pending</span>{% elif device['policy_revision'] != device['delivered_policy_revision'] %}<br><span class="badge status-warn">策略已更新，请 reset / Reset required</span>{% endif %}</td>
         <td>{{ device['key_generation'] }}</td>
         <td class="actions">
-          <form method="post" action="{{ url_for('web.reset_device_route', device_id=device['id']) }}" data-reset-download>
+          <form method="post" action="{{ url_for('web.reset_device_route', device_id=device['id']) }}" data-reset-download data-activate-url="{{ url_for('web.activate_reset_device_route', device_id=device['id']) }}">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
             <input type="hidden" name="delivery" value="download">
-            <button class="secondary" type="submit">{% if device['reset_pending'] %}重新准备并下载 / Replace download{% else %}1. 准备并下载 / Prepare + download{% endif %}</button>
+            <button class="secondary" type="submit">{% if device['reset_pending'] %}重新重置并下载 / Retry reset + download{% else %}重置并下载 / Reset + download{% endif %}</button>
           </form>
           {% if device['client_type'] in ('ios', 'android') %}
           <form method="post" action="{{ url_for('web.reset_device_route', device_id=device['id']) }}">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
             <input type="hidden" name="delivery" value="qr">
             <button class="secondary" type="submit">1. 准备并显示二维码 / Prepare + QR</button>
-          </form>
-          {% endif %}
-          {% if device['reset_pending'] %}
-          <form method="post" action="{{ url_for('web.activate_reset_device_route', device_id=device['id']) }}">
-            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <button type="submit">2. 激活新配置 / Activate replacement</button>
           </form>
           {% endif %}
           <form method="post" action="{{ url_for('web.delete_device_route', device_id=device['id']) }}">

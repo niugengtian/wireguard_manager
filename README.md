@@ -16,7 +16,7 @@ Web 与 CLI 的设备新增、reset、delete，以及用户禁用/启用，都�
 - 用户登录后按 Windows、macOS、Linux、iOS、Android 类型自助新增设备。
 - 每台设备使用独立密钥和全局唯一静态隧道 IP；超过配额会被拒绝。
 - 配置不可编辑，只能新增、`reset` 或 `delete`。
-- Web `reset` 采用两阶段交付：先下载/扫码且保持旧 Peer 有效，用户确认已保存后再激活新密钥并撤销旧公钥；静态 IP 默认保留。
+- 桌面端 Web `reset` 先完整下载新配置，响应交付后再自动热切换公钥并撤销旧 Peer；静态 IP 默认保留。二维码 reset 在人工扫描完成后再显式确认。
 - `delete` 先从期望状态和在线接口移除设备并验证，再释放 IP；旧公钥仍然无效。
 - 每台设备对应一条独立服务端 Peer，服务端 `AllowedIPs` 固定为唯一隧道 IP `/32`；客户端 `AllowedIPs` 可按设备设置。
 - 桌面端一次性下载 `.conf`；移动端可显示一次性二维码。
@@ -76,6 +76,7 @@ export WG_COOKIE_SECURE=1
 | `WG_ADAPTER` | `file` | 生产实时模式设为 `reconciler`；`file`/`dry-run` 只用于离线验证 |
 | `WG_RECONCILE_SOCKET` | `/run/wireguard-manager/reconcile.sock` | Web/CLI 与 root reconciler 的本机 Unix Socket |
 | `WG_RECONCILE_STATE_DIR` | `/var/lib/wireguard-manager-reconciler` | root reconciler 独占的 Peer 所有权清单和带请求标识的应用状态 |
+| `WG_RESET_ACTIVATION_DELAY_SECONDS` | `2` | `.conf` 完整交付后自动撤销旧 Peer 前的宽限秒数，范围 1-30 |
 | `WG_MAX_INSTALLER_BYTES` | 200 MiB | 安装包最大大小 |
 
 生成可用配置前，必须替换所有占位 WireGuard 参数。
@@ -107,7 +108,7 @@ export WG_COOKIE_SECURE=1
 
 客户端 `AllowedIPs` 决定该设备把哪些目标网段送入隧道。修改已保存策略后必须 reset 才能生成并一次性交付新客户端配置；服务器无法远程改写已经导入客户端的文件。服务端每个 Peer 的 `AllowedIPs = <该设备静态隧道 IP>/32` 用于身份与回程路由，不能拿它替代目的网段访问控制；如需限制某设备能访问的内部目标，应按来源隧道 IP 配置 nftables/防火墙策略。
 
-Web 仅通过当前 WireGuard 隧道访问时，reset 必须按页面的两步流程操作：第一步不改动在线 Peer，只交付新配置并在 SQLite 暂存新公钥；第二步才热切换 Peer。任何时候都不会保存新私钥。CLI `device reset` 面向服务器本机或带独立恢复通道的管理员，仍会立即撤销旧 Peer。
+Web 仅通过当前 WireGuard 隧道访问时，桌面端 reset 只需点一次“重置并下载”：请求先交付完整配置，响应关闭后等待短暂宽限期，再通过 reconciler 热切换 Peer。SQLite 期间只暂存新公钥，任何时候都不保存新私钥。CLI `device reset` 面向服务器本机或带独立恢复通道的管理员，仍会立即撤销旧 Peer。
 
 `0.0.0.0/0` 会接管全部 IPv4 流量，Windows 客户端还可能应用 kill-switch 行为。只有在服务端转发、NAT、DNS 和独立恢复通道都已验证时才显式配置全隧道；否则使用 `10.255.77.0/24,172.31.0.0/16` 这类分流范围。
 
@@ -148,7 +149,7 @@ Client `AllowedIPs` accepts up to 32 comma-separated IPv4 CIDRs. `0.0.0.0/0` mea
 - Independent keys and a globally unique static tunnel IP per device.
 - One independent server peer per device, with a unique tunnel `/32`; per-device client `AllowedIPs` policies.
 - Immutable configurations: create, reset, or delete only.
-- Web reset first delivers a replacement while the old peer remains active, then revokes the old key only after explicit activation. The static IP is preserved. CLI reset remains immediate for local/out-of-band administration.
+- Desktop Web reset fully delivers the replacement and then automatically hot-swaps the key after a short grace period. QR reset keeps explicit post-scan confirmation. The static IP is preserved, while CLI reset remains immediate for local/out-of-band administration.
 - Delete removes the desired peer before immediately releasing the IP.
 - One-time `.conf` downloads and one-time mobile QR delivery.
 - Installer validation, external binary storage, license attestation, SHA-256 metadata, and verified downloads.
@@ -209,6 +210,6 @@ See [ACCEPTANCE.md](ACCEPTANCE.md) for automated and real-browser evidence.
 
 Changing client `AllowedIPs` requires a reset to deliver a new one-time client configuration; a server cannot remotely rewrite a configuration already imported by a client. Server peer `AllowedIPs` remains the device's unique tunnel `/32`. Destination authorization belongs in a firewall policy keyed by the source tunnel IP.
 
-Web reset is deliberately two-step so a request carried by the old WireGuard peer cannot revoke its own transport before the replacement is downloaded. SQLite stores the pending public key only; the private key is still delivered once and never persisted. `0.0.0.0/0` is an explicit full-tunnel choice and may cut off local or remote-management traffic unless forwarding, NAT, DNS, and recovery access are already verified. The default is the configured tunnel CIDR.
+Desktop Web reset is one click: the response fully delivers the replacement, then a response-close hook waits a short grace period and automatically hot-swaps the peer. SQLite stores the pending public key only; the private key is still delivered once and never persisted. `0.0.0.0/0` is an explicit full-tunnel choice and may cut off local or remote-management traffic unless forwarding, NAT, DNS, and recovery access are already verified. The default is the configured tunnel CIDR.
 
 `NOT VERIFIED`: deployment on your live WireGuard server and AWS resources. No live interface or AWS resource has been touched.

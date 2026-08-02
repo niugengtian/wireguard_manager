@@ -21,6 +21,7 @@ def app(tmp_path):
             "SESSION_COOKIE_SECURE": False,
             "LOGIN_ATTEMPT_LIMIT": 3,
             "LOGIN_WINDOW_SECONDS": 60,
+            "WG_RESET_ACTIVATION_DELAY_SECONDS": 0,
         }
     )
     application.runtime_admin_password = secrets.token_urlsafe(18)

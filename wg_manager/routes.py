@@ -4,6 +4,7 @@ import base64
 import hmac
 import io
 import secrets
+import time
 from functools import wraps
 
 import qrcode
@@ -303,12 +304,26 @@ def reset_device_route(device_id: str):
             details={"reason": "not_owned_or_missing"},
         )
         abort(error.status, error.message)
-    return _deliver_configuration(
+    delivery = request.form.get("delivery", "download")
+    response = _deliver_configuration(
         device,
         configuration,
-        request.form.get("delivery", "download"),
+        delivery,
         reset_prepared=True,
     )
+    if delivery == "download":
+        app = current_app._get_current_object()
+        owner_user_id = g.user["id"]
+        pending_public_key = device["pending_public_key"]
+        response.call_on_close(
+            lambda: _activate_reset_after_download(
+                app,
+                device_id=device_id,
+                owner_user_id=owner_user_id,
+                pending_public_key=pending_public_key,
+            )
+        )
+    return response
 
 
 @web.post("/devices/<device_id>/reset/activate")
@@ -322,6 +337,8 @@ def activate_reset_device_route(device_id: str):
             device_id=device_id,
             owner_user_id=g.user["id"],
             actor_user_id=g.user["id"],
+            expected_pending_public_key=request.form.get("expected_pending_public_key")
+            or None,
         )
     except DomainError as error:
         flash(error.message, "error")
@@ -604,8 +621,37 @@ def _deliver_configuration(
     response.headers["Content-Type"] = "text/plain; charset=utf-8"
     response.headers["Content-Disposition"] = f'attachment; filename="{safe_name or "wireguard"}.conf"'
     if reset_prepared:
-        response.headers["X-WireGuard-Reset-State"] = "prepared-not-active"
+        response.headers["X-WireGuard-Reset-State"] = "activates-after-download"
+        response.headers["X-WireGuard-Reset-Public-Key"] = device["pending_public_key"]
     return _no_store(response)
+
+
+def _activate_reset_after_download(
+    app, *, device_id: str, owner_user_id: int, pending_public_key: str
+) -> None:
+    """Run only after the WSGI response body has been handed off completely."""
+    time.sleep(app.config["WG_RESET_ACTIVATION_DELAY_SECONDS"])
+    with app.app_context():
+        try:
+            activate_prepared_device_reset(
+                get_db(),
+                app.config,
+                device_id=device_id,
+                owner_user_id=owner_user_id,
+                actor_user_id=owner_user_id,
+                expected_pending_public_key=pending_public_key,
+            )
+        except DomainError as error:
+            if error.status != 409:
+                app.logger.warning(
+                    "automatic reset activation skipped for device %s (status %s)",
+                    device_id,
+                    error.status,
+                )
+        except Exception:
+            app.logger.exception(
+                "automatic reset activation failed for device %s", device_id
+            )
 
 
 def _no_store(response):

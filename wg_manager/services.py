@@ -438,6 +438,7 @@ def prepare_device_reset(
         )
     prepared = dict(device)
     prepared["pending_reset"] = 1
+    prepared["pending_public_key"] = public_key
     return prepared, configuration
 
 
@@ -448,6 +449,7 @@ def activate_prepared_device_reset(
     device_id: str,
     owner_user_id: int,
     actor_user_id: int,
+    expected_pending_public_key: str | None = None,
 ) -> dict:
     """Activate a previously delivered Web reset and revoke the old key."""
     live_applied = False
@@ -472,6 +474,17 @@ def activate_prepared_device_reset(
             if row["pending_public_key"] is None:
                 raise DomainError(
                     bi("没有待激活的重置配置", "no prepared reset is awaiting activation"), 409
+                )
+            if (
+                expected_pending_public_key is not None
+                and row["pending_public_key"] != expected_pending_public_key
+            ):
+                raise DomainError(
+                    bi(
+                        "已有更新的重置下载，跳过过期激活",
+                        "a newer reset download exists; stale activation skipped",
+                    ),
+                    409,
                 )
             if (
                 row["public_key"] != row["pending_base_public_key"]

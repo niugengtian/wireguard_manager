@@ -72,6 +72,9 @@ def create_app(test_config: dict | None = None) -> Flask:
         WG_RECONCILE_TIMEOUT_SECONDS=float(
             os.environ.get("WG_RECONCILE_TIMEOUT_SECONDS", "5")
         ),
+        WG_RESET_ACTIVATION_DELAY_SECONDS=float(
+            os.environ.get("WG_RESET_ACTIVATION_DELAY_SECONDS", "0" if testing else "2")
+        ),
     )
     if test_config:
         app.config.update(test_config)
@@ -90,6 +93,12 @@ def create_app(test_config: dict | None = None) -> Flask:
     )
     if app.config["WG_ADAPTER"] not in ("file", "dry-run", "reconciler"):
         raise RuntimeError("WG_ADAPTER must be file, dry-run, or reconciler")
+    reset_delay = app.config["WG_RESET_ACTIVATION_DELAY_SECONDS"]
+    minimum_reset_delay = 0 if testing else 1
+    if not minimum_reset_delay <= reset_delay <= 30:
+        raise RuntimeError(
+            f"WG_RESET_ACTIVATION_DELAY_SECONDS must be {minimum_reset_delay}-30 seconds"
+        )
 
     initialize(
         app.config["DATABASE"], default_client_allowed_ips=app.config["WG_ALLOWED_IPS"]
